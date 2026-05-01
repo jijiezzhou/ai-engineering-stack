@@ -1,0 +1,25 @@
+[project]
+name = "lantern"
+version = "0.1.0"
+description = "A local-first coding agent that explains unfamiliar codebases like a new hire."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Jijie Zhou" }]
+dependencies = [
+    "ollama>=0.4.0",
+    "anthropic>=0.40.0",
+    "typer>=0.15.0",
+    "rich>=13.9.0",
+    "pydantic>=2.10.0",
+]
+
+[project.scripts]
+lantern = "lantern.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lantern"]

@@ -2,8 +2,8 @@
 
 > Build a production-grade AI app in 8 weeks — one section at a time. Concepts you can run, not just read.
 
-[![Stars](https://img.shields.io/github/stars/zjzhou/ai-engineering-stack?style=social)](../../stargazers)
-[![Last commit](https://img.shields.io/github/last-commit/zjzhou/ai-engineering-stack)](../../commits/main)
+[![Stars](https://img.shields.io/github/stars/jijiezzhou/ai-engineering-stack?style=social)](../../stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/jijiezzhou/ai-engineering-stack)](../../commits/main)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

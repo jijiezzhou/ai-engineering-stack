@@ -17,7 +17,7 @@ Not an awesome-list. Not a theory dump. **Clone → follow → ship.**
 
 ## Status
 
-🚧 **Week 1 of 8.** Lantern's LLM client is shipping. Weeks 2–8 land week-by-week. Star to follow along.
+🚧 **Week 2 of 8.** Lantern can summarize files into typed Pydantic objects. Weeks 3–8 land week-by-week. Star to follow along.
 
 ## Quick start
 
@@ -34,13 +34,16 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 
 # 4. Talk to your local LLM
-uv run lantern "Explain Python decorators in 3 lines"
+uv run lantern chat "Explain Python decorators in 3 lines"
+
+# 5. Get a structured summary of any source file
+uv run lantern summarize lantern/llm.py
 ```
 
 Frontier swap (optional, when you want better quality):
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-LANTERN_BACKEND=anthropic uv run lantern "Hello"
+LANTERN_BACKEND=anthropic uv run lantern chat "Hello"
 ```
 
 ## The Build Path

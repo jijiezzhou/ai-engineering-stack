@@ -5,9 +5,9 @@ Build muscle memory for **temperature**, **system prompts**, and the **local↔f
 ## 1. Temperature — same prompt, three settings
 
 ```bash
-uv run lantern "Name 5 Python web frameworks" -t 0.0
-uv run lantern "Name 5 Python web frameworks" -t 0.7
-uv run lantern "Name 5 Python web frameworks" -t 1.5
+uv run lantern chat "Name 5 Python web frameworks" -t 0.0
+uv run lantern chat "Name 5 Python web frameworks" -t 0.7
+uv run lantern chat "Name 5 Python web frameworks" -t 1.5
 ```
 
 Run each one **twice**. Answer in your head:
@@ -21,9 +21,9 @@ Run each one **twice**. Answer in your head:
 ## 2. System prompts re-shape the model
 
 ```bash
-uv run lantern "How do I make a list?" --system "You are a Python tutor."
-uv run lantern "How do I make a list?" --system "You are a French chef."
-uv run lantern "How do I make a list?" --system "You are a paranoid security auditor."
+uv run lantern chat "How do I make a list?" --system "You are a Python tutor."
+uv run lantern chat "How do I make a list?" --system "You are a French chef."
+uv run lantern chat "How do I make a list?" --system "You are a paranoid security auditor."
 ```
 
 Same user prompt, three different worlds. The system prompt is the most powerful single lever you have.
@@ -32,10 +32,10 @@ Same user prompt, three different worlds. The system prompt is the most powerful
 
 ```bash
 # Local
-uv run lantern "Write a regex that matches valid IPv4 addresses" -t 0.0
+uv run lantern chat "Write a regex that matches valid IPv4 addresses" -t 0.0
 
 # Frontier
-LANTERN_BACKEND=anthropic uv run lantern "Write a regex that matches valid IPv4 addresses" -t 0.0
+LANTERN_BACKEND=anthropic uv run lantern chat "Write a regex that matches valid IPv4 addresses" -t 0.0
 ```
 
 Compare:

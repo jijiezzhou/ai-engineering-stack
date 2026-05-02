@@ -1,13 +1,10 @@
 """
 Lantern CLI — entry point for the cumulative capstone.
 
-Each week adds capabilities here. Week 1 ships a single command: stream a prompt
-to the configured LLM (Ollama by default, Anthropic via env var).
+Subcommands grow each week. Today:
 
-Usage:
-    uv run lantern "Explain Python decorators in 3 lines"
-    uv run lantern "Write a haiku" -t 0.0
-    uv run lantern "How do I list?" --system "You are a French chef."
+    uv run lantern chat "Explain Python decorators in 3 lines"
+    uv run lantern summarize lantern/llm.py
 
 Backends:
     LANTERN_BACKEND=ollama     (default; requires a running Ollama server)
@@ -17,22 +14,24 @@ Backends:
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import typer
 from rich.console import Console
 
 from lantern.llm import LLM
+from lantern.summarize import summarize_file
 
 app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
-    help="Lantern — a local-first coding agent. Week 1: a streaming prompt CLI.",
+    help="Lantern — a local-first coding agent.",
 )
 console = Console()
 
 
-@app.command()
-def main(
+@app.command("chat")
+def chat(
     prompt: str = typer.Argument(..., help="Prompt to send to the model."),
     temperature: float = typer.Option(
         0.7, "-t", "--temperature", min=0.0, max=2.0,
@@ -51,7 +50,7 @@ def main(
         help="Optional system prompt.",
     ),
 ):
-    """Stream a single completion from the configured LLM backend."""
+    """Stream a single completion from the configured LLM backend (week 1)."""
     llm = LLM(model=model, backend=backend)
     console.print(
         f"[dim]→ {llm.backend}:{llm.model}  T={temperature}"
@@ -72,6 +71,54 @@ def main(
     console.print(
         f"\n\n[dim]({n_chars} chars / {n_chunks} chunks in {elapsed:.2f}s "
         f"≈ {rate:.0f} chars/s)[/dim]"
+    )
+
+
+@app.command("summarize")
+def summarize(
+    path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
+                                 help="Path to the source file to summarize."),
+    backend: str = typer.Option(None, "--backend",
+                                 help="Override LANTERN_BACKEND."),
+    model: str = typer.Option(None, "--model",
+                               help="Override the default model."),
+    json_out: bool = typer.Option(False, "--json",
+                                   help="Emit raw JSON instead of pretty output."),
+):
+    """Produce a typed structured summary of a source file (week 2)."""
+    llm = LLM(model=model, backend=backend)
+    if not json_out:
+        console.print(
+            f"[dim]→ {llm.backend}:{llm.model}  summarizing {path}[/dim]"
+        )
+
+    started = time.perf_counter()
+    summary = summarize_file(path, llm=llm)
+    elapsed = time.perf_counter() - started
+
+    if json_out:
+        print(summary.model_dump_json())
+        return
+
+    console.print()
+    console.print(f"[bold cyan]{summary.path}[/bold cyan]  [dim]({summary.language})[/dim]")
+    console.print(f"[italic]{summary.one_liner}[/italic]")
+
+    if summary.public_api:
+        console.print("\n[bold]Public API[/bold]")
+        for s in summary.public_api:
+            console.print(f"  • {s}")
+    if summary.dependencies:
+        console.print("\n[bold]Dependencies[/bold]")
+        for d in summary.dependencies:
+            console.print(f"  • {d}")
+    if summary.notable:
+        console.print("\n[bold]Notable[/bold]")
+        for n in summary.notable:
+            console.print(f"  • {n}")
+
+    console.print(
+        f"\n[dim]confidence={summary.confidence:.2f}  ({elapsed:.2f}s)[/dim]"
     )
 
 

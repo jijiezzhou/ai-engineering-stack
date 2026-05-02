@@ -5,7 +5,7 @@
 By the end you can run:
 
 ```bash
-uv run lantern "Explain Python decorators in 3 lines"
+uv run lantern chat "Explain Python decorators in 3 lines"
 ```
 
 …and you'll have shipped Lantern's first slice: `lantern/llm.py`, the LLM client every later week imports.
@@ -92,20 +92,20 @@ Swap backends without changing code:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-LANTERN_BACKEND=anthropic uv run lantern "hello"
+LANTERN_BACKEND=anthropic uv run lantern chat "hello"
 ```
 
 ## Try it
 
 ```bash
 # Deterministic — same output every time
-uv run lantern "Write a haiku about debugging" -t 0.0
+uv run lantern chat "Write a haiku about debugging" -t 0.0
 
 # Creative — different every run
-uv run lantern "Write a haiku about debugging" -t 1.5
+uv run lantern chat "Write a haiku about debugging" -t 1.5
 
 # With a system prompt
-uv run lantern "How do I make a list?" --system "You are a French chef."
+uv run lantern chat "How do I make a list?" --system "You are a French chef."
 ```
 
 Then do the [exercise](exercise.md) — it takes 5 minutes and locks in the muscle memory.

@@ -40,6 +40,16 @@ uv run lantern chat "Explain Python decorators in 3 lines"
 uv run lantern summarize lantern/llm.py
 ```
 
+Install globally (optional — drop the `uv run` prefix from any directory):
+```bash
+uv tool install --editable .
+uv tool update-shell   # one-time: adds ~/.local/bin to your PATH
+# open a new terminal, then:
+lantern chat "Hello"
+lantern summarize ~/anywhere/file.py
+```
+The `--editable` flag links the install back to the source — your week 3+ changes are picked up live, no reinstall needed.
+
 Frontier swap (optional, when you want better quality):
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...

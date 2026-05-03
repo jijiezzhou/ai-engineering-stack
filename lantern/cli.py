@@ -1,10 +1,11 @@
 """
 Lantern CLI — entry point for the cumulative capstone.
 
-Subcommands grow each week. Today:
+Subcommands grow each week:
 
     uv run lantern chat "Explain Python decorators in 3 lines"
     uv run lantern summarize lantern/llm.py
+    uv run lantern ask "Where is the LLM client defined?" --repo .
 
 Backends:
     LANTERN_BACKEND=ollama     (default; requires a running Ollama server)
@@ -19,6 +20,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from lantern.agent import ask as ask_fn
 from lantern.llm import LLM
 from lantern.summarize import summarize_file
 
@@ -120,6 +122,34 @@ def summarize(
     console.print(
         f"\n[dim]confidence={summary.confidence:.2f}  ({elapsed:.2f}s)[/dim]"
     )
+
+
+@app.command("ask")
+def ask(
+    question: str = typer.Argument(..., help="Question about the codebase."),
+    repo: Path = typer.Option(
+        Path("."), "-r", "--repo",
+        exists=True, file_okay=False, dir_okay=True, readable=True,
+        help="Repository root that tools may read from.",
+    ),
+    backend: str = typer.Option(None, "--backend",
+                                 help="Override LANTERN_BACKEND."),
+    model: str = typer.Option(None, "--model",
+                               help="Override the default model."),
+):
+    """Ask a question; Lantern picks one tool, reads the code, then answers (week 3)."""
+    llm = LLM(model=model, backend=backend)
+    repo_resolved = repo.resolve()
+    console.print(
+        f"[dim]→ {llm.backend}:{llm.model}  repo={repo_resolved}[/dim]\n"
+    )
+
+    started = time.perf_counter()
+    answer = ask_fn(question, repo=repo_resolved, llm=llm)
+    elapsed = time.perf_counter() - started
+
+    console.print(answer)
+    console.print(f"\n[dim]({elapsed:.2f}s)[/dim]")
 
 
 if __name__ == "__main__":

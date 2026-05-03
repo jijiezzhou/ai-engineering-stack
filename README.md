@@ -17,7 +17,7 @@ Not an awesome-list. Not a theory dump. **Clone → follow → ship.**
 
 ## Status
 
-🚧 **Week 2 of 8.** Lantern can summarize files into typed Pydantic objects. Weeks 3–8 land week-by-week. Star to follow along.
+🚧 **Week 3 of 8.** Lantern can read, list, and grep a codebase on its own to answer questions. Weeks 4–8 land week-by-week. Star to follow along.
 
 ## Quick start
 
@@ -38,6 +38,9 @@ uv run lantern chat "Explain Python decorators in 3 lines"
 
 # 5. Get a structured summary of any source file
 uv run lantern summarize lantern/llm.py
+
+# 6. Ask a question — Lantern picks a tool, reads the code, then answers
+uv run lantern ask "What does this package expose?"
 ```
 
 Install globally (optional — drop the `uv run` prefix from any directory):

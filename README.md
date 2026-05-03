@@ -17,7 +17,7 @@ Not an awesome-list. Not a theory dump. **Clone → follow → ship.**
 
 ## Status
 
-🚧 **Week 3 of 8.** Lantern can read, list, and grep a codebase on its own to answer questions. Weeks 4–8 land week-by-week. Star to follow along.
+🚧 **Week 4 of 8.** Lantern can semantically search a codebase — find the right function by intent, not just by literal name. Weeks 5–8 land week-by-week. Star to follow along.
 
 ## Quick start
 
@@ -41,6 +41,11 @@ uv run lantern summarize lantern/llm.py
 
 # 6. Ask a question — Lantern picks a tool, reads the code, then answers
 uv run lantern ask "What does this package expose?"
+
+# 7. Semantic search (index once, search forever)
+ollama pull nomic-embed-text          # ~140 MB, one time
+uv run lantern index .
+uv run lantern search "where is path traversal blocked" -k 3
 ```
 
 Install globally (optional — drop the `uv run` prefix from any directory):

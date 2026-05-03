@@ -3,9 +3,11 @@ Lantern CLI — entry point for the cumulative capstone.
 
 Subcommands grow each week:
 
-    uv run lantern chat "Explain Python decorators in 3 lines"
-    uv run lantern summarize lantern/llm.py
-    uv run lantern ask "Where is the LLM client defined?" --repo .
+    lantern chat "Explain Python decorators in 3 lines"             (week 1)
+    lantern summarize lantern/llm.py                                (week 2)
+    lantern ask "Where is the LLM client defined?" --repo .         (week 3)
+    lantern index .                                                 (week 4)
+    lantern search "where is path traversal blocked" --repo .       (week 4)
 
 Backends:
     LANTERN_BACKEND=ollama     (default; requires a running Ollama server)
@@ -150,6 +152,83 @@ def ask(
 
     console.print(answer)
     console.print(f"\n[dim]({elapsed:.2f}s)[/dim]")
+
+
+@app.command("index")
+def index(
+    repo: Path = typer.Argument(
+        Path("."), exists=True, file_okay=False, dir_okay=True, readable=True,
+        help="Repository root to index.",
+    ),
+    rebuild: bool = typer.Option(
+        False, "--rebuild",
+        help="Wipe the existing collection and re-embed from scratch.",
+    ),
+):
+    """Embed a repository's code chunks for semantic search (week 4)."""
+    from lantern.index import index_repo, INDEX_ROOT
+
+    repo_resolved = repo.resolve()
+    console.print(
+        f"[dim]→ indexing {repo_resolved}\n"
+        f"  store: {INDEX_ROOT / repo_resolved.name}{'  (rebuild)' if rebuild else ''}[/dim]"
+    )
+
+    last_pct = -1
+
+    def progress(done: int, total: int) -> None:
+        nonlocal last_pct
+        pct = int(done * 100 / total) if total else 100
+        if pct >= last_pct + 10 or done == total:
+            console.print(f"  embedded {done}/{total} chunks ({pct}%)")
+            last_pct = pct
+
+    started = time.perf_counter()
+    stats = index_repo(repo_resolved, rebuild=rebuild, progress=progress)
+    elapsed = time.perf_counter() - started
+
+    console.print(
+        f"\n[bold]Indexed {stats['files']} files / {stats['chunks']} chunks[/bold] "
+        f"[dim]in {elapsed:.1f}s[/dim]"
+    )
+
+
+@app.command("search")
+def search_cmd(
+    query: str = typer.Argument(..., help="Natural-language query."),
+    repo: Path = typer.Option(
+        Path("."), "-r", "--repo",
+        exists=True, file_okay=False, dir_okay=True, readable=True,
+        help="Repository whose index to search. Run `lantern index` first.",
+    ),
+    top_k: int = typer.Option(5, "-k", "--top-k", min=1, max=50,
+                               help="How many hits to return."),
+):
+    """Semantic search over an indexed repository (week 4)."""
+    from lantern.search import search as search_fn
+
+    repo_resolved = repo.resolve()
+    console.print(f"[dim]→ searching {repo_resolved}  query={query!r}[/dim]")
+
+    started = time.perf_counter()
+    hits = search_fn(query, repo=repo_resolved, top_k=top_k)
+    elapsed = time.perf_counter() - started
+
+    if not hits:
+        console.print("\n(no hits — did you run `lantern index .` first?)")
+        return
+
+    for h in hits:
+        symbol = f" [yellow]{h.kind}[/yellow]:[bold]{h.name}[/bold]" if h.name else f" [yellow]{h.kind}[/yellow]"
+        console.print(
+            f"\n[cyan]{h.path}:{h.start_line}-{h.end_line}[/cyan]"
+            f"{symbol}  [dim]score={h.score:.3f}[/dim]"
+        )
+        # First five lines of the chunk as a preview
+        preview = "\n".join(h.content.splitlines()[:5])
+        console.print(f"[dim]{preview}[/dim]")
+
+    console.print(f"\n[dim]({len(hits)} hits in {elapsed:.2f}s)[/dim]")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,10 @@
 """Lantern — a local-first coding agent that explains unfamiliar codebases."""
 
 from lantern.agent import ask
+from lantern.chunk import Chunk, chunk_file
+from lantern.index import index_repo
 from lantern.llm import LLM, ToolCall
+from lantern.search import Hit, search
 from lantern.summarize import FileSummary, summarize_file
 from lantern.tools import DEFAULT_TOOLS, ToolSpec, grep, list_dir, read_file
 
@@ -19,4 +22,10 @@ __all__ = [
     "list_dir",
     "grep",
     "ask",
+    # week 4
+    "Chunk",
+    "chunk_file",
+    "index_repo",
+    "Hit",
+    "search",
 ]

@@ -1,0 +1,69 @@
+# Golden Q&A test set for evaluating retrieval quality on the Lantern repo.
+# Each case: a natural-language question + the file(s) that should appear in
+# the top-k hits. `expected_paths` are repo-root-relative.
+#
+# Used by: `lantern eval` (and `from lantern.evals import load_tests, evaluate`)
+
+- question: "Which file defines the path-traversal protection?"
+  expected_paths:
+    - lantern/tools.py
+
+- question: "How is structured output enforced from the LLM?"
+  expected_paths:
+    - lantern/llm.py
+
+- question: "Where is the streaming method that yields LLM tokens?"
+  expected_paths:
+    - lantern/llm.py
+
+- question: "Which file produces FileSummary objects from source code?"
+  expected_paths:
+    - lantern/summarize.py
+
+- question: "Where is the Decision schema that picks between tools?"
+  expected_paths:
+    - lantern/agent.py
+
+- question: "How does Lantern split Python files into semantic chunks?"
+  expected_paths:
+    - lantern/chunk.py
+
+- question: "Where are vector embeddings persisted to disk?"
+  expected_paths:
+    - lantern/index.py
+
+- question: "Which module implements grep-style search across files?"
+  expected_paths:
+    - lantern/tools.py
+
+- question: "Where is the Typer CLI with all subcommands defined?"
+  expected_paths:
+    - lantern/cli.py
+
+- question: "What is the default Ollama model Lantern uses?"
+  expected_paths:
+    - lantern/llm.py
+
+- question: "Where is BM25 sparse retrieval implemented?"
+  expected_paths:
+    - lantern/bm25.py
+
+- question: "How does the system handle a tree-sitter chunk that's too big?"
+  expected_paths:
+    - lantern/chunk.py
+
+- question: "Where is reciprocal rank fusion applied?"
+  expected_paths:
+    - lantern/search.py
+
+- question: "Which file scores passage relevance with an LLM?"
+  expected_paths:
+    - lantern/rerank.py
+
+- question: "Where is the eval harness that measures recall and MRR?"
+  expected_paths:
+    - lantern/evals.py
+
+- question: "How does the agent run a tool and feed its output back?"
+  expected_paths:
+    - lantern/agent.py

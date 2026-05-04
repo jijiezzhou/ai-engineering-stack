@@ -78,6 +78,11 @@ def index_repo(
         if progress:
             progress(min(i + EMBED_BATCH, len(chunks)), len(chunks))
 
+    # Build the BM25 sidecar. Cheap (sub-second on this repo) and dependent on
+    # the full corpus, so we rebuild every time rather than try to incrementalize.
+    from lantern.bm25 import BM25Index, bm25_path
+    BM25Index(chunks).save(bm25_path(INDEX_ROOT, repo.name))
+
     return {"files": len(files), "chunks": len(chunks)}
 
 

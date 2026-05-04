@@ -2,9 +2,11 @@
 
 from lantern.agent import ask
 from lantern.chunk import Chunk, chunk_file
+from lantern.evals import EvalReport, TestCase, evaluate, load_tests
 from lantern.index import index_repo
 from lantern.llm import LLM, ToolCall
-from lantern.search import Hit, search
+from lantern.rerank import rerank
+from lantern.search import Hit, bm25_search, hybrid_search, search
 from lantern.summarize import FileSummary, summarize_file
 from lantern.tools import DEFAULT_TOOLS, ToolSpec, grep, list_dir, read_file
 
@@ -28,4 +30,12 @@ __all__ = [
     "index_repo",
     "Hit",
     "search",
+    # week 5
+    "bm25_search",
+    "hybrid_search",
+    "rerank",
+    "TestCase",
+    "EvalReport",
+    "load_tests",
+    "evaluate",
 ]

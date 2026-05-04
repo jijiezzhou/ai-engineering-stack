@@ -203,15 +203,29 @@ def search_cmd(
     ),
     top_k: int = typer.Option(5, "-k", "--top-k", min=1, max=50,
                                help="How many hits to return."),
+    retriever: str = typer.Option(
+        "vector", "--retriever",
+        help="Retriever to use: vector | bm25 | hybrid (week 5).",
+    ),
 ):
-    """Semantic search over an indexed repository (week 4)."""
-    from lantern.search import search as search_fn
+    """Search an indexed repository (week 4 + week 5 retrievers)."""
+    from lantern.search import search as vector_search, bm25_search, hybrid_search
 
-    repo_resolved = repo.resolve()
-    console.print(f"[dim]→ searching {repo_resolved}  query={query!r}[/dim]")
+    fns = {
+        "vector": lambda q: vector_search(q, repo=repo.resolve(), top_k=top_k),
+        "bm25":   lambda q: bm25_search(q, repo=repo.resolve(), top_k=top_k),
+        "hybrid": lambda q: hybrid_search(q, repo=repo.resolve(), top_k=top_k),
+    }
+    if retriever not in fns:
+        console.print(f"[red]Unknown retriever {retriever!r}; choices: {sorted(fns)}[/red]")
+        raise typer.Exit(2)
+
+    console.print(
+        f"[dim]→ searching {repo.resolve()}  retriever={retriever}  query={query!r}[/dim]"
+    )
 
     started = time.perf_counter()
-    hits = search_fn(query, repo=repo_resolved, top_k=top_k)
+    hits = fns[retriever](query)
     elapsed = time.perf_counter() - started
 
     if not hits:
@@ -224,11 +238,88 @@ def search_cmd(
             f"\n[cyan]{h.path}:{h.start_line}-{h.end_line}[/cyan]"
             f"{symbol}  [dim]score={h.score:.3f}[/dim]"
         )
-        # First five lines of the chunk as a preview
         preview = "\n".join(h.content.splitlines()[:5])
         console.print(f"[dim]{preview}[/dim]")
 
     console.print(f"\n[dim]({len(hits)} hits in {elapsed:.2f}s)[/dim]")
+
+
+@app.command("eval")
+def eval_cmd(
+    repo: Path = typer.Option(
+        Path("."), "-r", "--repo",
+        exists=True, file_okay=False, dir_okay=True, readable=True,
+        help="Repository to evaluate retrievers against.",
+    ),
+    tests: Path = typer.Option(
+        Path("evals/lantern.yaml"), "-t", "--tests",
+        exists=True, dir_okay=False, readable=True,
+        help="Path to the YAML test set.",
+    ),
+    top_k: int = typer.Option(5, "-k", "--top-k", min=1, max=50),
+    skip_rerank: bool = typer.Option(
+        False, "--skip-rerank",
+        help="Skip the LLM-based reranker (saves ~10 s/question on local).",
+    ),
+):
+    """Evaluate retrievers on a golden Q&A test set (week 5)."""
+    from rich.table import Table
+    from lantern.evals import evaluate, load_tests
+    from lantern.search import bm25_search, hybrid_search, search as vector_search
+    from lantern.rerank import rerank
+
+    cases = load_tests(tests)
+    repo_resolved = repo.resolve()
+    console.print(
+        f"[dim]→ evaluating {len(cases)} questions  repo={repo_resolved}  k={top_k}[/dim]\n"
+    )
+
+    fns: dict[str, callable] = {
+        "vector": lambda q: vector_search(q, repo=repo_resolved, top_k=top_k),
+        "bm25":   lambda q: bm25_search(q, repo=repo_resolved, top_k=top_k),
+        "hybrid": lambda q: hybrid_search(q, repo=repo_resolved, top_k=top_k),
+    }
+    if not skip_rerank:
+        llm = LLM()
+        # Pool 4× the requested top_k so the reranker has enough candidates
+        # to actually re-order. If the right answer isn't in the pool,
+        # rerank can't surface it.
+        fns["hybrid+rerank"] = lambda q: rerank(
+            q,
+            hybrid_search(q, repo=repo_resolved, top_k=top_k * 4),
+            llm=llm,
+            top_k=top_k,
+        )
+
+    reports = []
+    for name, fn in fns.items():
+        started = time.perf_counter()
+        report = evaluate(name, fn, cases)
+        elapsed = time.perf_counter() - started
+        reports.append((report, elapsed))
+        console.print(
+            f"  [green]✓[/green] {name:<16} {elapsed:.1f}s "
+            f"(R@1={report.recall_at(1):.2f} R@{top_k}={report.recall_at(top_k):.2f} MRR={report.mrr:.2f})"
+        )
+
+    table = Table(title=f"Eval — {len(cases)} questions, top-{top_k}")
+    table.add_column("Retriever", style="cyan", no_wrap=True)
+    table.add_column("Recall@1", justify="right")
+    table.add_column("Recall@3", justify="right")
+    table.add_column(f"Recall@{top_k}", justify="right")
+    table.add_column("MRR", justify="right")
+    table.add_column("Time", justify="right", style="dim")
+    for r, elapsed in reports:
+        table.add_row(
+            r.name,
+            f"{r.recall_at(1):.2f}",
+            f"{r.recall_at(3):.2f}",
+            f"{r.recall_at(top_k):.2f}",
+            f"{r.mrr:.2f}",
+            f"{elapsed:.1f}s",
+        )
+    console.print()
+    console.print(table)
 
 
 if __name__ == "__main__":

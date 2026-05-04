@@ -17,7 +17,7 @@ Not an awesome-list. Not a theory dump. **Clone → follow → ship.**
 
 ## Status
 
-🚧 **Week 4 of 8.** Lantern can semantically search a codebase — find the right function by intent, not just by literal name. Weeks 5–8 land week-by-week. Star to follow along.
+🚧 **Week 5 of 8.** Lantern now has hybrid retrieval (BM25 + vector + RRF), an LLM-based reranker, and a golden-Q&A eval harness that prints actual Recall@k / MRR. Weeks 6–8 land week-by-week. Star to follow along.
 
 ## Quick start
 
@@ -46,6 +46,10 @@ uv run lantern ask "What does this package expose?"
 ollama pull nomic-embed-text          # ~140 MB, one time
 uv run lantern index .
 uv run lantern search "where is path traversal blocked" -k 3
+
+# 8. Compare retrievers on a golden Q&A test set (week 5)
+uv run lantern eval                    # full: vector, bm25, hybrid, hybrid+rerank
+uv run lantern eval --skip-rerank      # ~30s instead of ~3min
 ```
 
 Install globally (optional — drop the `uv run` prefix from any directory):

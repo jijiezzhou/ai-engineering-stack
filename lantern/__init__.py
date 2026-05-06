@@ -1,6 +1,6 @@
 """Lantern — a local-first coding agent that explains unfamiliar codebases."""
 
-from lantern.agent import ask
+from lantern.agent import AgentResult, Decision, Step, agent_loop, ask
 from lantern.chunk import Chunk, chunk_file
 from lantern.evals import EvalReport, TestCase, evaluate, load_tests
 from lantern.index import index_repo
@@ -24,6 +24,11 @@ __all__ = [
     "list_dir",
     "grep",
     "ask",
+    # week 6
+    "agent_loop",
+    "AgentResult",
+    "Decision",
+    "Step",
     # week 4
     "Chunk",
     "chunk_file",

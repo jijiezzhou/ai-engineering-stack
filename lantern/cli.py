@@ -22,7 +22,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from lantern.agent import ask as ask_fn
+from lantern.agent import agent_loop, ask as ask_fn
 from lantern.llm import LLM
 from lantern.summarize import summarize_file
 
@@ -134,24 +134,74 @@ def ask(
         exists=True, file_okay=False, dir_okay=True, readable=True,
         help="Repository root that tools may read from.",
     ),
+    single_step: bool = typer.Option(
+        False, "--single-step",
+        help="Use the week-3 two-shot agent (one tool, then answer).",
+    ),
+    max_steps: int = typer.Option(
+        5, "--max-steps", min=1, max=20,
+        help="Maximum tool-using iterations before forcing a final answer.",
+    ),
+    no_retrieval: bool = typer.Option(
+        False, "--no-retrieval",
+        help="Skip the hybrid-search primer at step 0.",
+    ),
+    show_trace: bool = typer.Option(
+        False, "--show-trace",
+        help="Print the agent's reasoning + tool calls before the answer.",
+    ),
     backend: str = typer.Option(None, "--backend",
                                  help="Override LANTERN_BACKEND."),
     model: str = typer.Option(None, "--model",
                                help="Override the default model."),
 ):
-    """Ask a question; Lantern picks one tool, reads the code, then answers (week 3)."""
+    """Ask a question; the agent inspects the code and answers (week 6 multi-step by default)."""
     llm = LLM(model=model, backend=backend)
     repo_resolved = repo.resolve()
+    mode = "single-step" if single_step else f"multi-step (max={max_steps})"
+    primer_note = "" if no_retrieval or single_step else "  retrieval=on"
     console.print(
-        f"[dim]→ {llm.backend}:{llm.model}  repo={repo_resolved}[/dim]\n"
+        f"[dim]→ {llm.backend}:{llm.model}  repo={repo_resolved}  mode={mode}{primer_note}[/dim]\n"
     )
 
     started = time.perf_counter()
-    answer = ask_fn(question, repo=repo_resolved, llm=llm)
+    if single_step:
+        answer = ask_fn(question, repo=repo_resolved, llm=llm)
+        trace = None
+        forced = False
+    else:
+        result = agent_loop(
+            question,
+            repo=repo_resolved,
+            llm=llm,
+            max_steps=max_steps,
+            use_retrieval=not no_retrieval,
+        )
+        answer = result.answer
+        trace = result.steps
+        forced = result.forced_final
     elapsed = time.perf_counter() - started
 
+    if show_trace and trace:
+        console.print("[bold]Trace[/bold]")
+        for i, step in enumerate(trace, 1):
+            d = step.decision
+            console.print(
+                f"\n[cyan]Step {i}[/cyan]  [yellow]{d.next_action}[/yellow]"
+                + (f"  path={d.path!r}" if d.path else "")
+                + (f"  pattern={d.pattern!r}" if d.pattern else "")
+            )
+            if d.reasoning:
+                console.print(f"  [dim]reasoning: {d.reasoning}[/dim]")
+            if step.tool_output is not None:
+                preview = step.tool_output.strip().splitlines()[:3]
+                if preview:
+                    console.print(f"  [dim]output: {' | '.join(s[:80] for s in preview)}[/dim]")
+        console.print("\n[bold]Answer[/bold]")
+
     console.print(answer)
-    console.print(f"\n[dim]({elapsed:.2f}s)[/dim]")
+    suffix = "  (max steps reached)" if forced else ""
+    console.print(f"\n[dim]({elapsed:.2f}s; {len(trace) if trace else 1} step{'s' if trace and len(trace) != 1 else ''}{suffix})[/dim]")
 
 
 @app.command("index")

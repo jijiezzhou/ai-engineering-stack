@@ -17,7 +17,7 @@ Not an awesome-list. Not a theory dump. **Clone → follow → ship.**
 
 ## Status
 
-🚧 **Week 5 of 8.** Lantern now has hybrid retrieval (BM25 + vector + RRF), an LLM-based reranker, and a golden-Q&A eval harness that prints actual Recall@k / MRR. Weeks 6–8 land week-by-week. Star to follow along.
+🚧 **Week 6 of 8.** Lantern is now a real multi-step agent — plans, inspects code with tools, follows up, and answers with citations. Retrieval (week 5) primes the first step. Weeks 7–8 land week-by-week. Star to follow along.
 
 ## Quick start
 
@@ -50,6 +50,9 @@ uv run lantern search "where is path traversal blocked" -k 3
 # 8. Compare retrievers on a golden Q&A test set (week 5)
 uv run lantern eval                    # full: vector, bm25, hybrid, hybrid+rerank
 uv run lantern eval --skip-rerank      # ~30s instead of ~3min
+
+# 9. Multi-step agent that traces code with reasoning (week 6)
+uv run lantern ask "How does a tool result get fed back to the LLM?" --show-trace
 ```
 
 Install globally (optional — drop the `uv run` prefix from any directory):

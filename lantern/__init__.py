@@ -9,6 +9,7 @@ from lantern.rerank import rerank
 from lantern.search import Hit, bm25_search, hybrid_search, search
 from lantern.summarize import FileSummary, summarize_file
 from lantern.tools import DEFAULT_TOOLS, ToolSpec, grep, list_dir, read_file
+from lantern.trace import Trace, list_runs, read_run
 
 __all__ = [
     # week 1
@@ -29,6 +30,10 @@ __all__ = [
     "AgentResult",
     "Decision",
     "Step",
+    # week 7
+    "Trace",
+    "list_runs",
+    "read_run",
     # week 4
     "Chunk",
     "chunk_file",

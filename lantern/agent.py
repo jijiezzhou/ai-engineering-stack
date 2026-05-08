@@ -1,11 +1,8 @@
 """
-Week 6 — multi-step onboarding agent.
+Week 6 — multi-step onboarding agent. Week 7 — instrumented with traces.
 
 The week-3 `ask()` was a fixed two-shot: model picks one tool, we run it,
-model writes the answer. That's good for "where is X defined" but breaks on
-"trace this call chain across three files" — the agent can't follow up.
-
-Week 6 wraps a *loop* around the same primitive:
+model writes the answer. Week 6 wraps a *loop* around the same primitive:
 
     while not done and step < max_steps:
         decision = LLM.structured(prompt + history, Decision)
@@ -14,12 +11,12 @@ Week 6 wraps a *loop* around the same primitive:
         output = run_tool(decision)
         history.append(Step(decision, output))
 
-Three pieces make this work in practice:
+Three pieces make it work in practice on a 7B local model:
 
-1. **Reasoning before action.** Decision now has a `reasoning` field — the
-   model writes one short sentence about what it's trying to learn before
-   it picks a tool. Forces a tiny chain-of-thought; cheap, and the trace is
-   readable for debugging.
+1. **Reasoning before action.** Decision has a `reasoning` field — the model
+   writes one short sentence about what it's trying to learn before it picks
+   a tool. Forces a tiny chain-of-thought; cheap, and the trace is readable
+   for debugging.
 
 2. **Retrieval primer.** Before step 0, we run `hybrid_search` for the user's
    question and put the top hits' file paths and snippets in the prompt.
@@ -27,11 +24,10 @@ Three pieces make this work in practice:
    `read_file('main.py')` on the first turn.
 
 3. **Step-aware memory.** Each iteration sees a numbered list of prior
-   steps with their reasoning, action, and (truncated) tool output. The
-   prompt-builder caps total context to keep us safely under 32K tokens.
+   steps with their reasoning, action, and (truncated) tool output.
 
-The week-3 single-step `ask()` is preserved — `lantern ask --single-step`
-keeps that behavior. The default is now `agent_loop()`.
+Week 7 adds an optional `trace: Trace | None` parameter that records every
+decision, tool output, and the final answer to a JSONL file.
 """
 
 from __future__ import annotations
@@ -44,6 +40,7 @@ from pydantic import BaseModel, Field
 
 from lantern.llm import LLM
 from lantern.tools import grep, list_dir, read_file
+from lantern.trace import Trace
 
 AGENT_SYSTEM = (
     "You are a senior engineer onboarding to an unfamiliar codebase. "
@@ -112,6 +109,7 @@ class AgentResult:
     answer: str
     steps: list[Step] = field(default_factory=list)
     forced_final: bool = False  # True if max_steps was hit before the model converged
+    run_id: Optional[str] = None  # set when a trace was attached
 
 
 # ---------------------------------------------------------------- single-step (week 3)
@@ -160,7 +158,7 @@ def ask(
     return llm.complete(follow_up, system=AGENT_SYSTEM, temperature=0.0).strip()
 
 
-# ---------------------------------------------------------------- multi-step (week 6)
+# ---------------------------------------------------------------- multi-step (week 6 + 7)
 
 def agent_loop(
     question: str,
@@ -169,19 +167,33 @@ def agent_loop(
     llm: Optional[LLM] = None,
     max_steps: int = 5,
     use_retrieval: bool = True,
+    trace: Optional[Trace] = None,
 ) -> AgentResult:
     """Multi-step agent. Loops `decision → tool → output` until the model
     returns a final answer, or `max_steps` is reached.
 
     Retrieval primer (week 5) seeds step 0 with top hits from `hybrid_search`,
-    so the model starts informed instead of guessing file paths."""
+    so the model starts informed instead of guessing file paths.
+
+    Pass `trace=Trace()` to write a JSONL log of the whole run to
+    `~/.lantern/traces/<run_id>.jsonl`."""
     repo_path = Path(repo).resolve()
     llm = llm or LLM()
+    if trace:
+        trace.event(
+            -1, "run_start",
+            question=question, repo=str(repo_path),
+            backend=llm.backend, model=llm.model, max_steps=max_steps,
+            use_retrieval=use_retrieval,
+        )
 
     primer = _retrieval_primer(question, repo_path) if use_retrieval else ""
+    if trace and primer:
+        trace.event(-1, "primer", chars=len(primer))
+
     steps: list[Step] = []
 
-    for _ in range(max_steps):
+    for step_idx in range(max_steps):
         prompt = _build_prompt(question, repo_path, primer, steps)
         decision = llm.structured(
             prompt=prompt,
@@ -189,13 +201,25 @@ def agent_loop(
             system=AGENT_SYSTEM,
             temperature=0.0,
         )
+        if trace:
+            trace.event(
+                step_idx, "decision",
+                next_action=decision.next_action,
+                reasoning=decision.reasoning,
+                path=decision.path,
+                pattern=decision.pattern,
+            )
 
         if decision.next_action == "final_answer":
             steps.append(Step(decision=decision))
+            answer = (decision.answer or "").strip() or "(model returned no answer)"
+            if trace:
+                trace.event(step_idx, "answer", text=answer)
             return AgentResult(
-                answer=(decision.answer or "").strip() or "(model returned no answer)",
+                answer=answer,
                 steps=steps,
                 forced_final=False,
+                run_id=trace.run_id if trace else None,
             )
 
         spec = _build_tool(decision)
@@ -204,6 +228,13 @@ def agent_loop(
         except Exception as e:  # noqa: BLE001
             output = f"ERROR running {decision.next_action}: {e}"
         steps.append(Step(decision=decision, tool_output=output))
+        if trace:
+            trace.event(
+                step_idx, "tool_output",
+                action=decision.next_action,
+                chars=len(output),
+                preview=output[:240],
+            )
 
     # Max steps hit. Force a final-answer Decision via the same schema so the
     # answer text comes from `Decision.answer` cleanly — `llm.complete()`
@@ -217,13 +248,19 @@ def agent_loop(
     )
     answer = (forced.answer or "").strip() or "(model returned no answer)"
     steps.append(Step(decision=forced))
-    return AgentResult(answer=answer, steps=steps, forced_final=True)
+    if trace:
+        trace.event(max_steps, "forced_final", text=answer)
+    return AgentResult(
+        answer=answer,
+        steps=steps,
+        forced_final=True,
+        run_id=trace.run_id if trace else None,
+    )
 
 
 # ---------------------------------------------------------------- helpers
 
 def _build_tool(d: Decision):
-    """Materialize the right ToolSpec from a Decision."""
     if d.next_action == "read_file":
         return read_file(path=d.path or ".")
     if d.next_action == "list_dir":
@@ -234,10 +271,6 @@ def _build_tool(d: Decision):
 
 
 def _retrieval_primer(question: str, repo_path: Path) -> str:
-    """Top hybrid-search hits formatted for inclusion in the prompt.
-
-    Returns "" if the repo isn't indexed. Failure is non-fatal — the agent
-    just starts without a primer and discovers files on its own."""
     try:
         from lantern.search import hybrid_search
         hits = hybrid_search(question, repo=repo_path, top_k=PRIMER_TOP_K)
@@ -266,7 +299,6 @@ def _build_prompt(
     *,
     force_final: bool = False,
 ) -> str:
-    """Render the agent's working context for the next step."""
     parts: list[str] = [f"Repository root: {repo_path}\n"]
     if primer:
         parts.append(primer + "\n")
@@ -292,7 +324,6 @@ def _build_prompt(
 
 
 def _render_history(steps: list[Step]) -> str:
-    """Format the trace so far for the prompt."""
     out = ["\n## Steps so far"]
     for i, s in enumerate(steps, 1):
         d = s.decision

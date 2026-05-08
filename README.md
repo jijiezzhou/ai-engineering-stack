@@ -17,7 +17,7 @@ Not an awesome-list. Not a theory dump. **Clone → follow → ship.**
 
 ## Status
 
-🚧 **Week 6 of 8.** Lantern is now a real multi-step agent — plans, inspects code with tools, follows up, and answers with citations. Retrieval (week 5) primes the first step. Weeks 7–8 land week-by-week. Star to follow along.
+🚧 **Week 7 of 8.** Lantern is now an **MCP server** (Claude Code, Cursor, etc. can call it directly) and ships JSONL traces of every agent run. Week 8 — the public benchmark — closes the curriculum. Star to follow along.
 
 ## Quick start
 
@@ -53,6 +53,14 @@ uv run lantern eval --skip-rerank      # ~30s instead of ~3min
 
 # 9. Multi-step agent that traces code with reasoning (week 6)
 uv run lantern ask "How does a tool result get fed back to the LLM?" --show-trace
+
+# 10. Save the agent run to a JSONL trace, then replay it (week 7)
+uv run lantern ask "Where is RRF implemented?" --save-trace
+uv run lantern trace                     # list recent runs
+uv run lantern trace <run_id>            # pretty replay
+
+# 11. Run as an MCP server — wire into Claude Code or Cursor (week 7)
+LANTERN_REPO=$(pwd) uv run lantern mcp   # stdio transport
 ```
 
 Install globally (optional — drop the `uv run` prefix from any directory):

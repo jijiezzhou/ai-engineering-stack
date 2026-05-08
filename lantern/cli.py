@@ -5,9 +5,12 @@ Subcommands grow each week:
 
     lantern chat "Explain Python decorators in 3 lines"             (week 1)
     lantern summarize lantern/llm.py                                (week 2)
-    lantern ask "Where is the LLM client defined?" --repo .         (week 3)
+    lantern ask "Where is the LLM client defined?" --repo .         (week 3 / 6)
     lantern index .                                                 (week 4)
-    lantern search "where is path traversal blocked" --repo .       (week 4)
+    lantern search "where is path traversal blocked" --repo .       (week 4 / 5)
+    lantern eval --skip-rerank                                      (week 5)
+    lantern mcp                                                     (week 7)
+    lantern trace                                                   (week 7)
 
 Backends:
     LANTERN_BACKEND=ollama     (default; requires a running Ollama server)
@@ -150,12 +153,18 @@ def ask(
         False, "--show-trace",
         help="Print the agent's reasoning + tool calls before the answer.",
     ),
+    save_trace: bool = typer.Option(
+        False, "--save-trace",
+        help="Write a JSONL trace to ~/.lantern/traces/ (week 7).",
+    ),
     backend: str = typer.Option(None, "--backend",
                                  help="Override LANTERN_BACKEND."),
     model: str = typer.Option(None, "--model",
                                help="Override the default model."),
 ):
     """Ask a question; the agent inspects the code and answers (week 6 multi-step by default)."""
+    from lantern.trace import Trace
+
     llm = LLM(model=model, backend=backend)
     repo_resolved = repo.resolve()
     mode = "single-step" if single_step else f"multi-step (max={max_steps})"
@@ -165,10 +174,12 @@ def ask(
     )
 
     started = time.perf_counter()
+    trace_obj = Trace() if (save_trace and not single_step) else None
     if single_step:
         answer = ask_fn(question, repo=repo_resolved, llm=llm)
-        trace = None
+        steps = None
         forced = False
+        run_id = None
     else:
         result = agent_loop(
             question,
@@ -176,15 +187,17 @@ def ask(
             llm=llm,
             max_steps=max_steps,
             use_retrieval=not no_retrieval,
+            trace=trace_obj,
         )
         answer = result.answer
-        trace = result.steps
+        steps = result.steps
         forced = result.forced_final
+        run_id = result.run_id
     elapsed = time.perf_counter() - started
 
-    if show_trace and trace:
+    if show_trace and steps:
         console.print("[bold]Trace[/bold]")
-        for i, step in enumerate(trace, 1):
+        for i, step in enumerate(steps, 1):
             d = step.decision
             console.print(
                 f"\n[cyan]Step {i}[/cyan]  [yellow]{d.next_action}[/yellow]"
@@ -201,7 +214,10 @@ def ask(
 
     console.print(answer)
     suffix = "  (max steps reached)" if forced else ""
-    console.print(f"\n[dim]({elapsed:.2f}s; {len(trace) if trace else 1} step{'s' if trace and len(trace) != 1 else ''}{suffix})[/dim]")
+    n_steps = len(steps) if steps else 1
+    console.print(f"\n[dim]({elapsed:.2f}s; {n_steps} step{'s' if n_steps != 1 else ''}{suffix})[/dim]")
+    if run_id:
+        console.print(f"[dim]trace saved: {run_id}  (lantern trace {run_id})[/dim]")
 
 
 @app.command("index")
@@ -370,6 +386,90 @@ def eval_cmd(
         )
     console.print()
     console.print(table)
+
+
+@app.command("mcp")
+def mcp_cmd():
+    """Run Lantern as an MCP server (stdio transport).
+
+    Set LANTERN_REPO to the absolute path of the repo to expose. Wire into
+    Claude Code's claude_desktop_config.json — see weeks/07-production/README.md.
+    """
+    from lantern.mcp import run as run_mcp
+    run_mcp()
+
+
+@app.command("trace")
+def trace_cmd(
+    run_id: str = typer.Argument(
+        None,
+        help="Run id (or trace filename) to display. If omitted, lists recent runs.",
+    ),
+    limit: int = typer.Option(20, "--limit", min=1, max=200,
+                               help="How many recent runs to show in list mode."),
+):
+    """List or replay agent traces (week 7)."""
+    from lantern.trace import TRACE_ROOT, iter_runs, read_run
+
+    if run_id is None:
+        runs = list(iter_runs(TRACE_ROOT))[-limit:]
+        if not runs:
+            console.print(f"[dim]no traces yet under {TRACE_ROOT}[/dim]")
+            return
+        from rich.table import Table
+        table = Table(title=f"Recent traces (newest last) — {TRACE_ROOT}")
+        table.add_column("run_id", style="cyan")
+        table.add_column("steps", justify="right")
+        table.add_column("final", style="dim")
+        table.add_column("question")
+        for _, summary in runs:
+            q = (summary.get("question") or "")[:80]
+            table.add_row(
+                summary["run_id"],
+                str(summary["num_steps"]),
+                summary.get("final_kind") or "?",
+                q,
+            )
+        console.print(table)
+        return
+
+    try:
+        events = read_run(run_id)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+    if not events:
+        console.print("(empty trace)")
+        return
+
+    for ev in events:
+        kind = ev.get("kind", "")
+        ts = ev.get("ts", 0.0)
+        step = ev.get("step", "-")
+        if kind == "run_start":
+            console.print(
+                f"[bold]{ev.get('question')}[/bold]\n"
+                f"[dim]repo={ev.get('repo')}  {ev.get('backend')}:{ev.get('model')}  "
+                f"max_steps={ev.get('max_steps')}[/dim]"
+            )
+        elif kind == "primer":
+            console.print(f"[dim]· primer: {ev.get('chars')} chars[/dim]")
+        elif kind == "decision":
+            console.print(
+                f"\n[cyan]Step {step}[/cyan] [yellow]{ev.get('next_action')}[/yellow]"
+                + (f"  path={ev.get('path')!r}" if ev.get("path") else "")
+                + (f"  pattern={ev.get('pattern')!r}" if ev.get("pattern") else "")
+                + f"  [dim]+{ts:.2f}s[/dim]"
+            )
+            console.print(f"  [dim]reasoning: {ev.get('reasoning')}[/dim]")
+        elif kind == "tool_output":
+            console.print(f"  [dim]output {ev.get('chars')} chars: {ev.get('preview', '')[:160]}[/dim]")
+        elif kind == "answer":
+            console.print(f"\n[bold]Answer[/bold]\n{ev.get('text', '')}")
+            console.print(f"[dim]+{ts:.2f}s[/dim]")
+        elif kind == "forced_final":
+            console.print(f"\n[bold]Answer (forced — max steps reached)[/bold]\n{ev.get('text', '')}")
+            console.print(f"[dim]+{ts:.2f}s[/dim]")
 
 
 if __name__ == "__main__":

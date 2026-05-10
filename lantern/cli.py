@@ -273,21 +273,28 @@ def search_cmd(
         "vector", "--retriever",
         help="Retriever to use: vector | bm25 | hybrid (week 5).",
     ),
+    kinds: str = typer.Option(
+        None, "--kinds",
+        help="Comma-separated chunk classes to include: code, doc, config, other (week 9). Default: all.",
+    ),
 ):
-    """Search an indexed repository (week 4 + week 5 retrievers)."""
+    """Search an indexed repository (week 4 + week 5 retrievers; week 9 --kinds filter)."""
     from lantern.search import search as vector_search, bm25_search, hybrid_search
 
+    kinds_list = [k.strip() for k in kinds.split(",") if k.strip()] if kinds else None
+
     fns = {
-        "vector": lambda q: vector_search(q, repo=repo.resolve(), top_k=top_k),
-        "bm25":   lambda q: bm25_search(q, repo=repo.resolve(), top_k=top_k),
-        "hybrid": lambda q: hybrid_search(q, repo=repo.resolve(), top_k=top_k),
+        "vector": lambda q: vector_search(q, repo=repo.resolve(), top_k=top_k, kinds=kinds_list),
+        "bm25":   lambda q: bm25_search(q, repo=repo.resolve(), top_k=top_k, kinds=kinds_list),
+        "hybrid": lambda q: hybrid_search(q, repo=repo.resolve(), top_k=top_k, kinds=kinds_list),
     }
     if retriever not in fns:
         console.print(f"[red]Unknown retriever {retriever!r}; choices: {sorted(fns)}[/red]")
         raise typer.Exit(2)
 
+    kinds_note = f"  kinds={kinds_list}" if kinds_list else ""
     console.print(
-        f"[dim]→ searching {repo.resolve()}  retriever={retriever}  query={query!r}[/dim]"
+        f"[dim]→ searching {repo.resolve()}  retriever={retriever}{kinds_note}  query={query!r}[/dim]"
     )
 
     started = time.perf_counter()

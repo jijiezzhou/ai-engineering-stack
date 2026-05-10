@@ -273,7 +273,14 @@ def _build_tool(d: Decision):
 def _retrieval_primer(question: str, repo_path: Path) -> str:
     try:
         from lantern.search import hybrid_search
-        hits = hybrid_search(question, repo=repo_path, top_k=PRIMER_TOP_K)
+        # Week 9 — restrict the primer to source files. The agent's
+        # questions are always about code; docs that *describe* a symbol
+        # would otherwise outrank the source that *defines* it on this
+        # corpus (see BENCHMARKS.md). Falls back to all kinds if the
+        # filter returns nothing (e.g. legacy index without chunk_class).
+        hits = hybrid_search(question, repo=repo_path, top_k=PRIMER_TOP_K, kinds=["code"])
+        if not hits:
+            hits = hybrid_search(question, repo=repo_path, top_k=PRIMER_TOP_K)
     except Exception:  # noqa: BLE001
         return ""
     if not hits:

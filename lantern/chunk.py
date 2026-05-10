@@ -9,6 +9,11 @@ Splits a source file into chunks that embed well:
 Why this matters: a chunk that ends mid-function embeds badly. Splitting on
 natural boundaries massively improves retrieval — the difference between
 "close enough" and "actually finds the right function."
+
+Week 9 — every chunk is also classified into `chunk_class` ("code" | "doc"
+| "config" | "other") by file extension. Used at retrieval time to keep
+docs from outranking source on symbol queries. See BENCHMARKS.md for the
+problem this fixes.
 """
 
 from __future__ import annotations
@@ -21,6 +26,27 @@ from pathlib import Path
 MAX_CHARS = 1500
 OVERLAP_CHARS = 200
 
+# Week 9 — file-extension → chunk class. Used by retrievers to filter
+# (e.g. "search only code" for symbol-style questions).
+_CODE_SUFFIXES = frozenset({
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".kt",
+    ".rb", ".sh", ".sql", ".html", ".css",
+})
+_DOC_SUFFIXES = frozenset({".md", ".rst", ".txt"})
+_CONFIG_SUFFIXES = frozenset({".toml", ".yaml", ".yml", ".json", ".cfg", ".ini"})
+
+
+def classify(path: Path | str) -> str:
+    """Return 'code' | 'doc' | 'config' | 'other' for `path` based on suffix."""
+    suffix = Path(path).suffix.lower()
+    if suffix in _CODE_SUFFIXES:
+        return "code"
+    if suffix in _DOC_SUFFIXES:
+        return "doc"
+    if suffix in _CONFIG_SUFFIXES:
+        return "config"
+    return "other"
+
 
 @dataclass
 class Chunk:
@@ -30,6 +56,7 @@ class Chunk:
     kind: str          # "function" | "class" | "header" | "fixed"
     name: str          # symbol name, or "" for header/fixed
     content: str
+    chunk_class: str = "other"  # "code" | "doc" | "config" | "other"  (week 9)
 
 
 def chunk_file(path: Path, *, max_chars: int = MAX_CHARS, overlap: int = OVERLAP_CHARS) -> list[Chunk]:
@@ -50,7 +77,13 @@ def chunk_file(path: Path, *, max_chars: int = MAX_CHARS, overlap: int = OVERLAP
     # context window. Split anything oversized into fixed sub-chunks while
     # keeping the parent's kind/name so retrieval still surfaces it as
     # "class:LLM" rather than "fixed".
-    return [sc for c in chunks for sc in _cap(c, max_chars, overlap)]
+    capped = [sc for c in chunks for sc in _cap(c, max_chars, overlap)]
+    # Week 9 — tag every chunk with its source file's class. Used by
+    # retrievers (search/bm25/hybrid) to filter at query time.
+    cls = classify(path)
+    for c in capped:
+        c.chunk_class = cls
+    return capped
 
 
 def _cap(c: Chunk, max_chars: int, overlap: int) -> list[Chunk]:

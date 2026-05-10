@@ -20,7 +20,7 @@ Not an awesome-list. Not a theory dump. **Clone → follow → ship.**
 
 ## Status
 
-✅ **Curriculum complete — all 8 weeks shipped.** See [BENCHMARKS.md](BENCHMARKS.md) for the published results.
+✅ **Core curriculum complete — all 8 weeks shipped.** Optional production extensions (weeks 9, 10) below for engineers who want to act on what the benchmark exposes. See [BENCHMARKS.md](BENCHMARKS.md) for the published numbers.
 
 ## Quick start
 
@@ -83,6 +83,15 @@ The capstone is **Lantern** — point it at any repo, it answers questions about
 
 Each week's folder (`weeks/NN-name/`) contains: concept walkthrough, runnable code, hands-on exercise, and a checkpoint that plugs into Lantern.
 
+### Production extensions (optional)
+
+The benchmark in week 8 exposed real gaps. These weeks close them.
+
+| Week | You learn | Lantern slice |
+|-----:|-----------|---------------|
+| 9 ✅ | Index-time chunk-type filtering — separate code from prose | `chunk_class` metadata, `kinds=` filter on every retriever, code-only retrieval primer. **On this repo: hybrid R@5 0.62 → 1.00, BM25 R@1 0.00 → 0.69.** |
+| 10 (optional) | Multi-model benchmark + cost tracking + CI eval gate | OpenAI backend, 3-model BENCHMARKS column, GitHub Actions workflow that fails PRs on Correctness regression |
+
 ## What you'll have at the end
 
 - **A 1,500-line, fully readable Python package** that wraps every modern AI engineering pattern: structured output, tool calling, RAG, hybrid retrieval, reranking, agents, MCP, evals.
@@ -118,7 +127,8 @@ Each week's folder (`weeks/NN-name/`) contains: concept walkthrough, runnable co
 │   ├── 05-hybrid-evals/
 │   ├── 06-agents/
 │   ├── 07-production/
-│   └── 08-benchmark/
+│   ├── 08-benchmark/
+│   └── 09-production-retrieval/    ← optional extension
 └── evals/lantern.yaml               ← 16 golden Q&A
 ```
 

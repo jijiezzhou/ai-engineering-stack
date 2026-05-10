@@ -1,5 +1,6 @@
 """
 Week 4–5 — search over an indexed repository.
+Week 9 — every retriever accepts a `kinds=` filter for chunk classes.
 
 Three retrievers, all return `list[Hit]`:
 
@@ -8,12 +9,17 @@ Three retrievers, all return `list[Hit]`:
     hybrid_search(query, repo)  — Reciprocal Rank Fusion of the two
 
 Plus `lantern.rerank.rerank()` for an LLM-judged re-ranking pass on top.
+
+The week-9 `kinds` parameter is the production fix for the BENCHMARKS.md
+"docs over source" finding: pass `kinds=["code"]` when you only want
+hits in source files (the agent's retrieval primer does this by default).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from lantern.bm25 import BM25Index, bm25_path
 from lantern.index import EMBED_MODEL, INDEX_ROOT, _get_collection
@@ -27,7 +33,19 @@ class Hit:
     kind: str
     name: str
     content: str
-    score: float  # interpretation depends on retriever; higher = better
+    score: float            # interpretation depends on retriever; higher = better
+    chunk_class: str = ""   # "code" | "doc" | "config" | "other" (week 9)
+
+
+def _kinds_where(kinds: Optional[list[str]]) -> Optional[dict]:
+    """Build a Chroma `where` clause that filters by chunk_class.
+    Tolerates legacy entries (which don't have chunk_class metadata) by
+    filtering only when at least one of `kinds` is provided."""
+    if not kinds:
+        return None
+    if len(kinds) == 1:
+        return {"chunk_class": kinds[0]}
+    return {"chunk_class": {"$in": list(kinds)}}
 
 
 # ---------------------------------------------------------------- vector
@@ -38,8 +56,12 @@ def search(
     repo: Path | str = ".",
     top_k: int = 5,
     embed_model: str = EMBED_MODEL,
+    kinds: Optional[list[str]] = None,
 ) -> list[Hit]:
-    """Top-k cosine hits for `query` in the dense vector index for `repo`."""
+    """Top-k cosine hits for `query` in the dense vector index for `repo`.
+
+    `kinds` (week 9): optional list like ["code"] to restrict to a single
+    chunk class. None = all classes."""
     repo_path = Path(repo).resolve()
     coll = _get_collection(repo_path, reset=False)
 
@@ -47,7 +69,11 @@ def search(
     client = Client()
     q_emb = client.embed(model=embed_model, input=query)["embeddings"][0]
 
-    res = coll.query(query_embeddings=[q_emb], n_results=top_k)
+    res = coll.query(
+        query_embeddings=[q_emb],
+        n_results=top_k,
+        where=_kinds_where(kinds),
+    )
     docs = res["documents"][0]
     metas = res["metadatas"][0]
     distances = res["distances"][0]
@@ -61,6 +87,7 @@ def search(
             name=str(meta.get("name", "") or ""),
             content=doc,
             score=1.0 - float(dist),
+            chunk_class=str(meta.get("chunk_class", "") or ""),
         )
         for doc, meta, dist in zip(docs, metas, distances)
     ]
@@ -68,8 +95,16 @@ def search(
 
 # ------------------------------------------------------------------ bm25
 
-def bm25_search(query: str, *, repo: Path | str = ".", top_k: int = 5) -> list[Hit]:
-    """Top-k BM25 hits — sparse lexical retrieval. Catches exact symbol names."""
+def bm25_search(
+    query: str,
+    *,
+    repo: Path | str = ".",
+    top_k: int = 5,
+    kinds: Optional[list[str]] = None,
+) -> list[Hit]:
+    """Top-k BM25 hits — sparse lexical retrieval. Catches exact symbol names.
+
+    `kinds` (week 9): optional list to filter by chunk class."""
     repo_path = Path(repo).resolve()
     path = bm25_path(INDEX_ROOT, repo_path.name)
     if not path.exists():
@@ -77,7 +112,7 @@ def bm25_search(query: str, *, repo: Path | str = ".", top_k: int = 5) -> list[H
             f"BM25 index missing at {path}. Run `lantern index <repo>` to build it."
         )
     bm25 = BM25Index.load(path)
-    raw = bm25.search(query, top_k=top_k)
+    raw = bm25.search(query, top_k=top_k, kinds=kinds)
     return [
         Hit(
             path=c.path,
@@ -87,6 +122,7 @@ def bm25_search(query: str, *, repo: Path | str = ".", top_k: int = 5) -> list[H
             name=c.name,
             content=c.content,
             score=float(score),
+            chunk_class=c.chunk_class,
         )
         for c, score in raw
     ]
@@ -100,6 +136,7 @@ def hybrid_search(
     repo: Path | str = ".",
     top_k: int = 5,
     rrf_k: int = 60,
+    kinds: Optional[list[str]] = None,
 ) -> list[Hit]:
     """Reciprocal Rank Fusion of the vector and BM25 rankings.
 
@@ -107,11 +144,13 @@ def hybrid_search(
     to its score. Document ordering then comes from summing these contributions
     across rankers. Robust to score-scale differences between rankers
     (cosine 0–1 vs BM25 unbounded), unlike weighted-sum.
-    """
+
+    `kinds` (week 9): chunk-class filter applied to both underlying retrievers
+    before fusion."""
     pool = max(top_k * 3, 15)
-    vec = search(query, repo=repo, top_k=pool)
+    vec = search(query, repo=repo, top_k=pool, kinds=kinds)
     try:
-        sparse = bm25_search(query, repo=repo, top_k=pool)
+        sparse = bm25_search(query, repo=repo, top_k=pool, kinds=kinds)
     except FileNotFoundError:
         sparse = []  # graceful: hybrid degrades to vector-only
 
@@ -140,6 +179,7 @@ def hybrid_search(
             name=by_key[k].name,
             content=by_key[k].content,
             score=score,
+            chunk_class=by_key[k].chunk_class,
         )
         for k, score in ranked
     ]

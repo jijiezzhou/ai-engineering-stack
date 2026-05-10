@@ -71,6 +71,9 @@ def index_repo(
                     "end_line": c.end_line,
                     "kind": c.kind,
                     "name": c.name,
+                    # Week 9 — primary key for the chunk-type filter at
+                    # query time (Chroma `where` clause).
+                    "chunk_class": c.chunk_class,
                 }
                 for c in batch
             ],

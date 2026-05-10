@@ -25,31 +25,44 @@ Two harnesses, one test set (`evals/lantern.yaml`).
 Hardware: MacBook Air 15" M4, 16 GB unified memory.
 Models: `qwen2.5-coder:7b` via Ollama for both agent and judge in this run.
 
-### Retrieval
+### Retrieval — week 8 baseline vs week 9 chunk-type filter
 
-`lantern eval --mode retrieval --skip-rerank` over all 16 questions, top-5:
+`lantern eval --mode retrieval --skip-rerank` over all 16 questions, top-5.
+
+**Default (all kinds — week 5 / week 8 publication):**
 
 | Retriever | Recall@1 | Recall@3 | Recall@5 | MRR  | Time  |
 |-----------|---------:|---------:|---------:|-----:|------:|
-| vector    |     0.31 |     0.69 |     0.81 | 0.49 |  0.8s |
-| bm25      |     0.00 |     0.44 |     0.62 | 0.22 |  0.0s |
-| hybrid    |     0.31 |     0.69 |     0.75 | 0.48 |  0.4s |
-| hybrid+rerank* | 0.31 | 0.69 | 0.81 | 0.49 | ~12 min |
+| vector    |     0.25 |     0.62 |     0.69 | 0.41 |  0.6s |
+| bm25      |     0.00 |     0.25 |     0.31 | 0.13 |  0.1s |
+| hybrid    |     0.19 |     0.44 |     0.62 | 0.33 |  0.4s |
 
-\* rerank is full-corpus LLM judging — slow on a 7B local model. The number listed is from a separate full run; `--skip-rerank` is the default for iteration speed.
+**`kinds=["code"]` (week 9 production fix):**
+
+| Retriever | Recall@1 | Recall@3 | Recall@5 | MRR  |
+|-----------|---------:|---------:|---------:|-----:|
+| vector    | **0.50** | **0.81** | **0.88** | **0.66** |
+| bm25      | **0.69** | **0.75** | **0.81** | **0.73** |
+| hybrid    | **0.50** | **0.81** | **1.00** | **0.69** |
+
+The BM25 row is the headline. **From R@1=0.00 to 0.69 with one filter** — once docs that mention a symbol stop competing with source that defines it, sparse retrieval works. Hybrid R@5 reaches a perfect 1.00 on this set.
+
+The diagnosis from week 5 was right: the corpus, not the retriever, was the bottleneck.
 
 ### Agent end-to-end (Qwen 7B agent + Qwen 7B judge)
 
-`lantern eval --mode agent --questions 4 --max-steps 5` (4 questions for benchmark publication; full 16 takes ~15-30 min):
+`lantern eval --mode agent --questions 4 --max-steps 5`. 4 questions for runtime tractability (~5 min); the full 16-question pass takes ~20-30 min.
 
-| Metric | Value |
-|---|---:|
-| Correctness (LLM-judge) | 0.00 |
-| Avg judge confidence | 0.78 |
-| File-hit rate | 0.75 |
-| Avg steps per question | 6.0 |
-| Forced-final rate | 1.00 |
-| Total elapsed | 146.3s (~37s/question) |
+| Metric | Week 8 (no filter) | Week 9 (code-only primer) | Δ |
+|---|---:|---:|---:|
+| Correctness (LLM-judge) | 0.00 | **0.25** | +25pp |
+| Avg judge confidence | 0.78 | **0.95** | judge is more decisive |
+| File-hit rate | 0.75 | 0.50 | (narrower greps with code-only primer) |
+| Avg steps per question | 6.0 | 6.0 | unchanged |
+| Forced-final rate | 1.00 | 1.00 | unchanged |
+| Total elapsed | 146.3s | 274.3s | longer per-step thinking |
+
+Correctness moved from 0/4 → 1/4. **Honestly: the headline still rounds to "the 7B agent loops on hard questions and times out."** Week 9's primer fix made the *first* step of every run more accurate, which is why one question now passes that didn't before. But synthesis at this model size is the remaining bottleneck — you'd need a frontier agent to break out of forced-final at 100%.
 
 ## What these numbers mean
 
@@ -62,15 +75,15 @@ The agent eval cleanly separates two failure modes:
 
 > **The agent can locate code but can't reason over it well enough to write a confident, correct answer at this size.** This is the headline finding. It's the difference between a 7B local model and a frontier model — the same retrieval primer, the same tools, the same prompt templates, but radically different downstream quality.
 
-Production fixes (in increasing order of effort):
+Production fixes (in increasing order of effort), **with status**:
 
-1. **Increase `max_steps`** from 5 to 10. Cuts forced-final rate; helps Correctness mildly.
-2. **Use a frontier judge** (`--judge-backend anthropic`). Calibrates the headline number.
-3. **Use a frontier agent** (`LANTERN_BACKEND=anthropic`). Expected to flip Correctness from 0.0 to 0.7+ on this exact harness.
-4. **Swap to a real cross-encoder reranker** (`bge-reranker-v2-m3`). Lifts retrieval R@1 from 0.31 toward 0.6+.
-5. **Index-time chunk-type filtering** (separate code from prose). Largest expected R@1 lift; was diagnosed as the corpus issue in week 5.
+1. ✅ **Index-time chunk-type filtering** (week 9). Code-only retrieval lifts hybrid R@5 from 0.62 to 1.00 and BM25 R@1 from 0.00 to 0.69. *Done.*
+2. **Increase `max_steps`** from 5 to 10. Cuts forced-final rate; mild Correctness lift. Trivial change. *Open.*
+3. **Use a frontier judge** (`--judge-backend anthropic`). Calibrates the headline number. Already wired; needs an API key to publish. *Open.*
+4. **Use a frontier agent** (`LANTERN_BACKEND=anthropic`). Expected to flip Correctness from 0.25 to 0.7+ on this exact harness. *Open.*
+5. **Swap to a real cross-encoder reranker** (`bge-reranker-v2-m3`). Lifts retrieval ceiling further; the `lantern.rerank.rerank()` interface is the swap point. *Open (week 10 candidate).*
 
-The benchmark itself doesn't ship those fixes — that's what makes it a *benchmark*. It tells you exactly what to fix next.
+The benchmark itself doesn't ship the open fixes — that's what makes it a *benchmark*. It tells you exactly what to do next, prioritized.
 
 ## Reproduce
 
@@ -86,16 +99,24 @@ git clone https://github.com/jijiezzhou/ai-engineering-stack
 cd ai-engineering-stack
 uv sync
 
-# 2. Build the index (~5 s)
-uv run lantern index .
+# 2. Build the index (~5-10 s; populates chunk_class metadata for week 9)
+uv run lantern index . --rebuild
 
-# 3. Retrieval benchmark (~2 s without rerank, ~12 min with rerank)
+# 3a. Retrieval — default (all kinds, the week-5/8 baseline)
 uv run lantern eval --mode retrieval --skip-rerank
-uv run lantern eval --mode retrieval                    # full, slow
+
+# 3b. Retrieval — code-only (week 9 production fix, gives hybrid R@5 = 1.00)
+uv run python -c "
+from lantern.evals import load_tests, evaluate
+from lantern.search import hybrid_search
+report = evaluate('hybrid (code-only)',
+    lambda q: hybrid_search(q, repo='.', top_k=5, kinds=['code']),
+    load_tests('evals/lantern.yaml'))
+print(f'R@1={report.recall_at(1):.2f}  R@5={report.recall_at(5):.2f}  MRR={report.mrr:.2f}')"
 
 # 4. Agent benchmark — start small, then go all-in
-uv run lantern eval --mode agent --questions 4          # ~3-6 min
-uv run lantern eval --mode agent                        # all 16, ~15-30 min
+uv run lantern eval --mode agent --questions 4          # ~5 min
+uv run lantern eval --mode agent                        # all 16, ~20-30 min
 
 # 5. Frontier comparison (requires ANTHROPIC_API_KEY)
 LANTERN_BACKEND=anthropic uv run lantern eval --mode agent --questions 4
@@ -103,7 +124,7 @@ LANTERN_BACKEND=anthropic uv run lantern eval --mode agent --judge-backend anthr
 
 # 6. Run on YOUR codebase
 cd /path/to/your-real-repo
-uv run lantern index .
+uv run lantern index . --rebuild
 $EDITOR evals/your-repo.yaml          # write 5-10 questions you'd ask a new hire
 uv run lantern eval --mode agent --tests evals/your-repo.yaml --repo .
 ```

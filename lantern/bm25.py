@@ -43,10 +43,25 @@ class BM25Index:
         self.tokenized = [tokenize(c.content) for c in chunks]
         self.bm25 = BM25Okapi(self.tokenized)
 
-    def search(self, query: str, top_k: int = 5) -> list[tuple[Chunk, float]]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        *,
+        kinds: list[str] | None = None,
+    ) -> list[tuple[Chunk, float]]:
+        """BM25 search, optionally restricted to chunks whose `chunk_class`
+        is in `kinds` (week 9). The full BM25 index stays intact — we
+        post-filter scores by class so IDF stays comparable across calls."""
         scores = self.bm25.get_scores(tokenize(query))
-        ranked = sorted(range(len(scores)), key=lambda i: -scores[i])[:top_k]
-        return [(self.chunks[i], float(scores[i])) for i in ranked if scores[i] > 0]
+        candidates = list(enumerate(scores))
+        if kinds:
+            candidates = [
+                (i, s) for i, s in candidates
+                if self.chunks[i].chunk_class in kinds
+            ]
+        candidates.sort(key=lambda x: -x[1])
+        return [(self.chunks[i], float(s)) for i, s in candidates[:top_k] if s > 0]
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

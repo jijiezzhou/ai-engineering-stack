@@ -1,69 +1,169 @@
-# Golden Q&A test set for evaluating retrieval quality on the Lantern repo.
-# Each case: a natural-language question + the file(s) that should appear in
-# the top-k hits. `expected_paths` are repo-root-relative.
+# Golden Q&A test set for evaluating retrieval AND agent quality on the
+# Lantern repo.
 #
-# Used by: `lantern eval` (and `from lantern.evals import load_tests, evaluate`)
+# Each case has:
+#   question        — natural-language input
+#   expected_paths  — repo-relative path(s); used by retrieval eval (week 5)
+#                     and as a soft signal for agent eval (week 8)
+#   golden_answer   — one-paragraph reference; ground truth for the
+#                     LLM-as-judge in `lantern eval --mode agent` (week 8)
+#
+# Used by: `lantern eval` and `from lantern.evals import load_tests`.
 
 - question: "Which file defines the path-traversal protection?"
   expected_paths:
     - lantern/tools.py
+  golden_answer: >-
+    Path-traversal protection is implemented by the helper function
+    `_resolve_safely(p, root)` in `lantern/tools.py` (around line 52).
+    It resolves the user-supplied path against the repository root and
+    raises ValueError if the resolved path escapes that root. Every
+    ToolSpec.run() in tools.py calls it before touching the filesystem.
 
 - question: "How is structured output enforced from the LLM?"
   expected_paths:
     - lantern/llm.py
+  golden_answer: >-
+    `LLM.structured(prompt, schema)` in `lantern/llm.py` enforces structured
+    output via two backend-specific paths: Ollama uses the `format=<json-schema>`
+    constraint; Anthropic uses tool-use as extraction (a single forced tool whose
+    input_schema is the Pydantic schema). On validation failure the method
+    retries once with the validation error fed back to the model.
 
 - question: "Where is the streaming method that yields LLM tokens?"
   expected_paths:
     - lantern/llm.py
+  golden_answer: >-
+    `LLM.stream(prompt, *, temperature, system, max_tokens)` in
+    `lantern/llm.py` is the streaming method. It returns an Iterator[str]
+    and yields text chunks as they arrive. The Ollama path uses
+    `client.chat(..., stream=True)`; the Anthropic path uses
+    `client.messages.stream(...).text_stream`.
 
 - question: "Which file produces FileSummary objects from source code?"
   expected_paths:
     - lantern/summarize.py
+  golden_answer: >-
+    `lantern/summarize.py` produces FileSummary objects via
+    `summarize_file(path)`, which reads the file (truncating to
+    MAX_FILE_CHARS), builds a prompt that includes the source code and
+    explicit field-by-field instructions, and calls
+    `LLM.structured(prompt, FileSummary)` to get a validated Pydantic
+    instance.
 
 - question: "Where is the Decision schema that picks between tools?"
   expected_paths:
     - lantern/agent.py
+  golden_answer: >-
+    The Decision schema lives in `lantern/agent.py`. It's a Pydantic
+    model with fields `reasoning` (one-sentence think-before-act),
+    `next_action` (Literal[read_file, list_dir, grep, final_answer]),
+    `path`, `pattern`, and `answer`. The agent calls `LLM.structured()`
+    with this schema each step to make a tool-use decision.
 
 - question: "How does Lantern split Python files into semantic chunks?"
   expected_paths:
     - lantern/chunk.py
+  golden_answer: >-
+    `lantern/chunk.py` splits Python via tree-sitter: it parses the file
+    with the tree-sitter-python grammar, walks top-level
+    function_definition / class_definition / decorated_definition nodes
+    and emits one Chunk per top-level def/class plus a "header" chunk for
+    module-level code (imports, docstring). Non-Python files fall back to
+    fixed-size chunks with newline-aligned breaks. `_cap()` re-splits any
+    semantic chunk that exceeds MAX_CHARS while preserving its kind/name.
 
 - question: "Where are vector embeddings persisted to disk?"
   expected_paths:
     - lantern/index.py
+  golden_answer: >-
+    Vector embeddings are persisted by `index_repo(repo)` in
+    `lantern/index.py`, which writes them to a per-repo Chroma collection
+    at `~/.lantern/index/<repo-name>/` using the cosine HNSW space.
 
 - question: "Which module implements grep-style search across files?"
   expected_paths:
     - lantern/tools.py
+  golden_answer: >-
+    The `grep` ToolSpec in `lantern/tools.py` implements substring search
+    across files. Its `run(root)` method walks the tree (skipping
+    SKIP_DIRS like .git, .venv, node_modules), reads each file, and
+    yields case-insensitive matches as `path:line: content` rows up to
+    MAX_OUTPUT_CHARS.
 
 - question: "Where is the Typer CLI with all subcommands defined?"
   expected_paths:
     - lantern/cli.py
+  golden_answer: >-
+    `lantern/cli.py` defines the Typer app with all subcommands:
+    chat (week 1), summarize (week 2), ask (weeks 3+6), index +
+    search (week 4), eval (week 5), mcp + trace (week 7).
 
 - question: "What is the default Ollama model Lantern uses?"
   expected_paths:
     - lantern/llm.py
+  golden_answer: >-
+    The default Ollama model is `qwen2.5-coder:7b`, defined in the
+    DEFAULT_MODELS dict in `lantern/llm.py`. The default for Anthropic is
+    `claude-sonnet-4-6`.
 
 - question: "Where is BM25 sparse retrieval implemented?"
   expected_paths:
     - lantern/bm25.py
+  golden_answer: >-
+    BM25 sparse retrieval is implemented in `lantern/bm25.py` via the
+    `BM25Index` class, which wraps `rank_bm25.BM25Okapi`. The index is
+    built and persisted (pickle) at `~/.lantern/index/<repo>/bm25.pkl`
+    by `index_repo` and queried by `bm25_search` in lantern/search.py.
 
 - question: "How does the system handle a tree-sitter chunk that's too big?"
   expected_paths:
     - lantern/chunk.py
+  golden_answer: >-
+    Oversized tree-sitter chunks (e.g. a 237-line class) are handled by
+    `_cap(c, max_chars, overlap)` in `lantern/chunk.py`. After tree-sitter
+    produces semantic chunks, _cap re-splits any chunk over MAX_CHARS into
+    fixed-size sub-chunks with overlap, while preserving the parent's
+    kind ('class' / 'function') and name so retrieval still surfaces them
+    semantically.
 
 - question: "Where is reciprocal rank fusion applied?"
   expected_paths:
     - lantern/search.py
+  golden_answer: >-
+    Reciprocal Rank Fusion is applied by `hybrid_search()` in
+    `lantern/search.py`. For each ranker (vector, BM25), every doc at
+    rank r contributes `1 / (60 + r)` to its score; final ordering
+    comes from summing across rankers. Score-scale-free, robust to the
+    different score distributions of cosine vs BM25.
 
 - question: "Which file scores passage relevance with an LLM?"
   expected_paths:
     - lantern/rerank.py
+  golden_answer: >-
+    `lantern/rerank.py` scores passage relevance via `rerank(query, hits)`,
+    which sends all passages in one prompt to LLM.structured() with a
+    `_RerankBatch` schema (`scores: list[float]`). The model returns one
+    relevance score per passage; hits are reordered by descending score.
 
 - question: "Where is the eval harness that measures recall and MRR?"
   expected_paths:
     - lantern/evals.py
+  golden_answer: >-
+    The eval harness is `lantern/evals.py`. The `evaluate(name, retrieve_fn,
+    tests)` function runs each test through a retriever and returns an
+    EvalReport with Recall@k (recall_at(k)) and MRR (mrr) metrics.
+    Week 8 adds `evaluate_agent()` for end-to-end agent grading via
+    LLM-as-judge.
 
 - question: "How does the agent run a tool and feed its output back?"
   expected_paths:
     - lantern/agent.py
+  golden_answer: >-
+    In `lantern/agent.py`, `agent_loop()` runs a loop where each
+    iteration: (1) calls LLM.structured() with the Decision schema to
+    pick a tool, (2) materializes the corresponding ToolSpec via
+    `_build_tool(decision)`, (3) calls `spec.run(repo_path)`, (4)
+    appends a Step(decision, tool_output) to the history, (5) renders
+    that history into the next prompt. Stops when the model picks
+    next_action='final_answer' or max_steps is reached.

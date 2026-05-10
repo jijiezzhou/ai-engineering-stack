@@ -315,77 +315,148 @@ def eval_cmd(
     repo: Path = typer.Option(
         Path("."), "-r", "--repo",
         exists=True, file_okay=False, dir_okay=True, readable=True,
-        help="Repository to evaluate retrievers against.",
+        help="Repository to evaluate against.",
     ),
     tests: Path = typer.Option(
         Path("evals/lantern.yaml"), "-t", "--tests",
         exists=True, dir_okay=False, readable=True,
         help="Path to the YAML test set.",
     ),
+    mode: str = typer.Option(
+        "retrieval", "--mode",
+        help="retrieval (week 5) or agent (week 8).",
+    ),
     top_k: int = typer.Option(5, "-k", "--top-k", min=1, max=50),
     skip_rerank: bool = typer.Option(
         False, "--skip-rerank",
-        help="Skip the LLM-based reranker (saves ~10 s/question on local).",
+        help="Retrieval mode: skip the LLM reranker (~10s/question saved).",
+    ),
+    max_steps: int = typer.Option(
+        5, "--max-steps", min=1, max=20,
+        help="Agent mode: max steps per question.",
+    ),
+    questions: int = typer.Option(
+        0, "--questions", min=0,
+        help="Limit to first N questions (0 = all). Useful for slow agent mode.",
+    ),
+    judge_backend: str = typer.Option(
+        None, "--judge-backend",
+        help="Agent mode: backend for the LLM-as-judge ('ollama'|'anthropic'). Defaults to LANTERN_BACKEND.",
     ),
 ):
-    """Evaluate retrievers on a golden Q&A test set (week 5)."""
+    """Evaluate retrievers (week 5) or the agent end-to-end (week 8)."""
     from rich.table import Table
-    from lantern.evals import evaluate, load_tests
-    from lantern.search import bm25_search, hybrid_search, search as vector_search
-    from lantern.rerank import rerank
+    from lantern.evals import evaluate, evaluate_agent, load_tests
 
     cases = load_tests(tests)
+    if questions:
+        cases = cases[:questions]
     repo_resolved = repo.resolve()
-    console.print(
-        f"[dim]→ evaluating {len(cases)} questions  repo={repo_resolved}  k={top_k}[/dim]\n"
-    )
 
-    fns: dict[str, callable] = {
-        "vector": lambda q: vector_search(q, repo=repo_resolved, top_k=top_k),
-        "bm25":   lambda q: bm25_search(q, repo=repo_resolved, top_k=top_k),
-        "hybrid": lambda q: hybrid_search(q, repo=repo_resolved, top_k=top_k),
-    }
-    if not skip_rerank:
-        llm = LLM()
-        # Pool 4× the requested top_k so the reranker has enough candidates
-        # to actually re-order. If the right answer isn't in the pool,
-        # rerank can't surface it.
-        fns["hybrid+rerank"] = lambda q: rerank(
-            q,
-            hybrid_search(q, repo=repo_resolved, top_k=top_k * 4),
-            llm=llm,
-            top_k=top_k,
-        )
+    if mode == "retrieval":
+        from lantern.search import bm25_search, hybrid_search, search as vector_search
+        from lantern.rerank import rerank
 
-    reports = []
-    for name, fn in fns.items():
-        started = time.perf_counter()
-        report = evaluate(name, fn, cases)
-        elapsed = time.perf_counter() - started
-        reports.append((report, elapsed))
         console.print(
-            f"  [green]✓[/green] {name:<16} {elapsed:.1f}s "
-            f"(R@1={report.recall_at(1):.2f} R@{top_k}={report.recall_at(top_k):.2f} MRR={report.mrr:.2f})"
+            f"[dim]→ retrieval eval: {len(cases)} questions  repo={repo_resolved}  k={top_k}[/dim]\n"
         )
 
-    table = Table(title=f"Eval — {len(cases)} questions, top-{top_k}")
-    table.add_column("Retriever", style="cyan", no_wrap=True)
-    table.add_column("Recall@1", justify="right")
-    table.add_column("Recall@3", justify="right")
-    table.add_column(f"Recall@{top_k}", justify="right")
-    table.add_column("MRR", justify="right")
-    table.add_column("Time", justify="right", style="dim")
-    for r, elapsed in reports:
-        table.add_row(
-            r.name,
-            f"{r.recall_at(1):.2f}",
-            f"{r.recall_at(3):.2f}",
-            f"{r.recall_at(top_k):.2f}",
-            f"{r.mrr:.2f}",
-            f"{elapsed:.1f}s",
+        fns: dict[str, callable] = {
+            "vector": lambda q: vector_search(q, repo=repo_resolved, top_k=top_k),
+            "bm25":   lambda q: bm25_search(q, repo=repo_resolved, top_k=top_k),
+            "hybrid": lambda q: hybrid_search(q, repo=repo_resolved, top_k=top_k),
+        }
+        if not skip_rerank:
+            llm = LLM()
+            fns["hybrid+rerank"] = lambda q: rerank(
+                q,
+                hybrid_search(q, repo=repo_resolved, top_k=top_k * 4),
+                llm=llm,
+                top_k=top_k,
+            )
+
+        reports = []
+        for name, fn in fns.items():
+            started = time.perf_counter()
+            report = evaluate(name, fn, cases)
+            elapsed = time.perf_counter() - started
+            reports.append((report, elapsed))
+            console.print(
+                f"  [green]✓[/green] {name:<16} {elapsed:.1f}s "
+                f"(R@1={report.recall_at(1):.2f} R@{top_k}={report.recall_at(top_k):.2f} MRR={report.mrr:.2f})"
+            )
+
+        table = Table(title=f"Retrieval eval — {len(cases)} questions, top-{top_k}")
+        table.add_column("Retriever", style="cyan", no_wrap=True)
+        table.add_column("Recall@1", justify="right")
+        table.add_column("Recall@3", justify="right")
+        table.add_column(f"Recall@{top_k}", justify="right")
+        table.add_column("MRR", justify="right")
+        table.add_column("Time", justify="right", style="dim")
+        for r, elapsed in reports:
+            table.add_row(
+                r.name,
+                f"{r.recall_at(1):.2f}",
+                f"{r.recall_at(3):.2f}",
+                f"{r.recall_at(top_k):.2f}",
+                f"{r.mrr:.2f}",
+                f"{elapsed:.1f}s",
+            )
+        console.print()
+        console.print(table)
+        return
+
+    if mode == "agent":
+        # Filter to cases with golden_answer
+        cases_with_gold = [c for c in cases if c.golden_answer]
+        if not cases_with_gold:
+            console.print("[red]No test cases have a `golden_answer` field set.[/red]")
+            raise typer.Exit(2)
+
+        llm = LLM()
+        judge = LLM(backend=judge_backend) if judge_backend else llm
+        console.print(
+            f"[dim]→ agent eval: {len(cases_with_gold)} questions on "
+            f"{llm.backend}:{llm.model}  judge={judge.backend}:{judge.model}  "
+            f"max_steps={max_steps}  repo={repo_resolved}[/dim]\n"
         )
-    console.print()
-    console.print(table)
+        console.print("[dim](slow — multi-step Qwen 7B is ~30-90 s per question; ~10-30 min total)[/dim]\n")
+
+        def on_case(case):
+            mark = "[green]✓[/green]" if case.correct else "[red]✗[/red]"
+            steps = f"{case.n_steps}st"
+            if case.forced_final:
+                steps += "*"
+            q = case.question[:55]
+            console.print(
+                f"  {mark} {case.elapsed_s:>5.0f}s  {steps:<5} "
+                f"conf={case.confidence:.2f}  {q}"
+            )
+
+        report = evaluate_agent(
+            cases_with_gold,
+            repo=repo_resolved,
+            llm=llm,
+            judge=judge,
+            max_steps=max_steps,
+            on_case=on_case,
+        )
+
+        table = Table(title=f"Agent eval — {len(report.cases)} questions  ({report.name})")
+        table.add_column("Metric", style="cyan", no_wrap=True)
+        table.add_column("Value", justify="right")
+        table.add_row("Correctness (LLM-judge)", f"{report.correctness:.2f}")
+        table.add_row("Avg judge confidence", f"{report.avg_confidence:.2f}")
+        table.add_row("File-hit rate (any expected file opened)", f"{report.file_hit_rate:.2f}")
+        table.add_row("Avg steps per question", f"{report.avg_steps:.1f}")
+        table.add_row("Forced-final rate", f"{report.forced_rate:.2f}")
+        table.add_row("Total elapsed", f"{report.total_elapsed_s:.1f}s")
+        console.print()
+        console.print(table)
+        return
+
+    console.print(f"[red]Unknown --mode {mode!r}; choices: retrieval, agent[/red]")
+    raise typer.Exit(2)
 
 
 @app.command("mcp")

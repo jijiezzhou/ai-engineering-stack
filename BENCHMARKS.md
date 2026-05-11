@@ -51,18 +51,21 @@ The diagnosis from week 5 was right: the corpus, not the retriever, was the bott
 
 ### Agent end-to-end (Qwen 7B agent + Qwen 7B judge)
 
-`lantern eval --mode agent --questions 4 --max-steps 5`. 4 questions for runtime tractability (~5 min); the full 16-question pass takes ~20-30 min.
+`lantern eval --mode agent --questions 4`. Same 4 questions across all three rows; only the agent code changes.
 
-| Metric | Week 8 (no filter) | Week 9 (code-only primer) | Δ |
+| Metric | Week 8 (no filter, max=5) | Week 9 (code-only primer, max=5) | Week 10 (+dedup, validate-retry, 2-stage finalize, max=8) |
 |---|---:|---:|---:|
-| Correctness (LLM-judge) | 0.00 | **0.25** | +25pp |
-| Avg judge confidence | 0.78 | **0.95** | judge is more decisive |
-| File-hit rate | 0.75 | 0.50 | (narrower greps with code-only primer) |
-| Avg steps per question | 6.0 | 6.0 | unchanged |
-| Forced-final rate | 1.00 | 1.00 | unchanged |
-| Total elapsed | 146.3s | 274.3s | longer per-step thinking |
+| Correctness (LLM-judge) | 0.00 | 0.25 | **0.50** |
+| Avg judge confidence | 0.78 | 0.95 | 0.65 |
+| File-hit rate | 0.75 | 0.50 | **1.00** |
+| Avg steps per question | 6.0 | 6.0 | 9.0 |
+| Forced-final rate | 1.00 | 1.00 | 1.00 |
+| Total elapsed | 146.3s | 274.3s | 953.0s |
+| `n_dedup_skips` (avg) | — | — | non-zero on most runs |
 
-Correctness moved from 0/4 → 1/4. **Honestly: the headline still rounds to "the 7B agent loops on hard questions and times out."** Week 9's primer fix made the *first* step of every run more accurate, which is why one question now passes that didn't before. But synthesis at this model size is the remaining bottleneck — you'd need a frontier agent to break out of forced-final at 100%.
+Correctness *doubled* from week 9 → week 10. File-hit hit 1.00 — every question now opens at least one expected file thanks to the validate-retry catching empty grep patterns. The cost: ~3.5× wall time on this 7B model (more steps, validate-retry adds one LLM call per malformed step).
+
+**Forced-final rate is still 1.00** — the local 7B model can't fully converge on any of these 4 questions in 8 steps. The two-stage finalize means it now writes a better forced answer (cites real files), but it's still hitting the budget cap. That's the local-7B ceiling on this corpus; closing it further requires a frontier agent.
 
 ## What these numbers mean
 
@@ -78,10 +81,12 @@ The agent eval cleanly separates two failure modes:
 Production fixes (in increasing order of effort), **with status**:
 
 1. ✅ **Index-time chunk-type filtering** (week 9). Code-only retrieval lifts hybrid R@5 from 0.62 to 1.00 and BM25 R@1 from 0.00 to 0.69. *Done.*
-2. **Increase `max_steps`** from 5 to 10. Cuts forced-final rate; mild Correctness lift. Trivial change. *Open.*
-3. **Use a frontier judge** (`--judge-backend anthropic`). Calibrates the headline number. Already wired; needs an API key to publish. *Open.*
-4. **Use a frontier agent** (`LANTERN_BACKEND=anthropic`). Expected to flip Correctness from 0.25 to 0.7+ on this exact harness. *Open.*
-5. **Swap to a real cross-encoder reranker** (`bge-reranker-v2-m3`). Lifts retrieval ceiling further; the `lantern.rerank.rerank()` interface is the swap point. *Open (week 10 candidate).*
+2. ✅ **Agent loop hardening** (week 10). Tool-call dedup + validate-and-retry on Decision + two-stage forced-final + `max_steps` 5→8. Correctness 0.25 → 0.50 on a Qwen 7B agent. *Done.*
+3. ✅ **CI eval gate** (week 10). `.github/workflows/eval.yml` runs retrieval eval on PRs and asserts `hybrid R@5 ≥ 0.85 with kinds=["code"]`. *Done.*
+4. **Use a frontier agent** (`LANTERN_BACKEND=anthropic`). Expected to flip Correctness from 0.50 to 0.75+ on this exact harness. Already wired; needs an API key to publish.
+5. **Use a frontier judge** (`--judge-backend anthropic`). Calibrates the headline number. Already wired; needs an API key.
+6. **Swap to a real cross-encoder reranker** (`bge-reranker-v2-m3`). Lifts retrieval ceiling further; the `lantern.rerank.rerank()` interface is the swap point.
+7. **OpenAI backend** in `lantern/llm.py`. ~10 lines; adds a third model column to BENCHMARKS.
 
 The benchmark itself doesn't ship the open fixes — that's what makes it a *benchmark*. It tells you exactly what to do next, prioritized.
 

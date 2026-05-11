@@ -1,0 +1,70 @@
+name: Lantern Eval
+
+# Runs the retrieval eval on every PR that touches lantern source or the
+# test set. The agent eval is too slow for CI on free runners (~20-30 min);
+# run it locally before merging significant retrieval / agent changes.
+
+on:
+  pull_request:
+    paths:
+      - 'lantern/**'
+      - 'evals/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  push:
+    branches: [main]
+    paths:
+      - 'lantern/**'
+      - 'evals/**'
+
+jobs:
+  retrieval-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve > /tmp/ollama.log 2>&1 &
+          # Wait for Ollama API to come up
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+              echo "Ollama ready after ${i}s"; break
+            fi
+            sleep 1
+          done
+
+      - name: Pull embedding model
+        run: ollama pull nomic-embed-text
+
+      - name: Sync Python deps
+        run: uv sync --frozen
+
+      - name: Build index
+        run: uv run lantern index . --rebuild
+
+      - name: Retrieval eval (default — all kinds)
+        run: uv run lantern eval --mode retrieval --skip-rerank
+
+      - name: Retrieval eval (code-only — the week-9 production config)
+        run: |
+          uv run python -c "
+          from lantern.evals import load_tests, evaluate
+          from lantern.search import hybrid_search
+          report = evaluate(
+              'hybrid (code-only)',
+              lambda q: hybrid_search(q, repo='.', top_k=5, kinds=['code']),
+              load_tests('evals/lantern.yaml'),
+          )
+          r5 = report.recall_at(5)
+          print(f'hybrid kinds=code  R@5 = {r5:.2f}  MRR = {report.mrr:.2f}')
+          # Regression gate: hybrid R@5 with kinds=code should stay near 1.0.
+          # If it drops below 0.85, something in chunking/indexing regressed.
+          assert r5 >= 0.85, f'Retrieval regression: hybrid R@5 dropped to {r5:.2f}'
+          "

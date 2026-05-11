@@ -101,6 +101,8 @@ class read_file(ToolSpec):
     )
 
     def run(self, root: Path) -> str:
+        if not self.path.strip():
+            return "ERROR: read_file requires a non-empty path argument."
         try:
             full = _resolve_safely(self.path, root)
         except ValueError as e:
@@ -160,6 +162,12 @@ class grep(ToolSpec):
     )
 
     def run(self, root: Path) -> str:
+        if not self.pattern.strip():
+            return (
+                "ERROR: grep requires a non-empty pattern (e.g. a function "
+                "name like '_resolve_safely' or a phrase like 'rank fusion'). "
+                "Try again with a real substring."
+            )
         try:
             full = _resolve_safely(self.path, root)
         except ValueError as e:

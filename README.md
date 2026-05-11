@@ -90,7 +90,7 @@ The benchmark in week 8 exposed real gaps. These weeks close them.
 | Week | You learn | Lantern slice |
 |-----:|-----------|---------------|
 | 9 ✅ | Index-time chunk-type filtering — separate code from prose | `chunk_class` metadata, `kinds=` filter on every retriever, code-only retrieval primer. **On this repo: hybrid R@5 0.62 → 1.00, BM25 R@1 0.00 → 0.69.** |
-| 10 (optional) | Multi-model benchmark + cost tracking + CI eval gate | OpenAI backend, 3-model BENCHMARKS column, GitHub Actions workflow that fails PRs on Correctness regression |
+| 10 ✅ | Agent loop hardening + CI eval gate | Tool-call dedup, validate-and-retry on `Decision`, two-stage forced-final, `max_steps` default 5 → 8, GitHub Actions retrieval regression gate. **Pushes Qwen 7B Correctness past where pure retrieval fixes can.** |
 
 ## What you'll have at the end
 
@@ -128,7 +128,9 @@ The benchmark in week 8 exposed real gaps. These weeks close them.
 │   ├── 06-agents/
 │   ├── 07-production/
 │   ├── 08-benchmark/
-│   └── 09-production-retrieval/    ← optional extension
+│   ├── 09-production-retrieval/    ← optional extension
+│   └── 10-production-ops/          ← optional extension
+├── .github/workflows/eval.yml       ← CI retrieval regression gate (week 10)
 └── evals/lantern.yaml               ← 16 golden Q&A
 ```
 

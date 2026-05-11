@@ -47,9 +47,10 @@ AGENT_SYSTEM = (
     "You answer questions by inspecting code with three tools: read_file "
     "(open a file), list_dir (list a directory), grep (find a substring "
     "across files). Each step you take should genuinely move you closer to "
-    "answering — no busywork. When you have enough information, set "
-    "next_action='final_answer' and write a concrete, sourced answer. "
-    "Be specific: name real files, real symbols, real line numbers."
+    "answering — no busywork, no repeating tool calls you've already made. "
+    "When you have enough information, set next_action='final_answer' and "
+    "write a concrete, sourced answer. Be specific: name real files, real "
+    "symbols, real line numbers."
 )
 
 # Per-tool-output cap when rendering history. Keeps prompts under 32K even
@@ -59,6 +60,11 @@ HISTORY_OUTPUT_CHARS = 2000
 # How many top retrieval hits to put in the primer. 5 is enough to bias the
 # first step without dominating the prompt.
 PRIMER_TOP_K = 5
+
+# Week 10 default. The week-6 default of 5 was too tight for multi-file
+# trace questions; raising to 8 lifts Correctness on harder questions
+# without changing easy ones.
+DEFAULT_MAX_STEPS = 8
 
 
 class Decision(BaseModel):
@@ -110,6 +116,7 @@ class AgentResult:
     steps: list[Step] = field(default_factory=list)
     forced_final: bool = False  # True if max_steps was hit before the model converged
     run_id: Optional[str] = None  # set when a trace was attached
+    n_dedup_skips: int = 0       # week 10: how many duplicate tool calls were rerouted
 
 
 # ---------------------------------------------------------------- single-step (week 3)
@@ -165,7 +172,7 @@ def agent_loop(
     *,
     repo: str | Path = ".",
     llm: Optional[LLM] = None,
-    max_steps: int = 5,
+    max_steps: int = DEFAULT_MAX_STEPS,
     use_retrieval: bool = True,
     trace: Optional[Trace] = None,
 ) -> AgentResult:
@@ -174,6 +181,11 @@ def agent_loop(
 
     Retrieval primer (week 5) seeds step 0 with top hits from `hybrid_search`,
     so the model starts informed instead of guessing file paths.
+
+    Week 10 — tool-call dedup. If the model emits the same
+    `(next_action, path, pattern)` as a previous step, we don't waste an
+    iteration re-running it: the prior tool output is reused and the model
+    is nudged to pick something different on the next step.
 
     Pass `trace=Trace()` to write a JSONL log of the whole run to
     `~/.lantern/traces/<run_id>.jsonl`."""
@@ -192,6 +204,8 @@ def agent_loop(
         trace.event(-1, "primer", chars=len(primer))
 
     steps: list[Step] = []
+    seen_calls: dict[tuple[str, str, str], str] = {}  # (action, path, pattern) -> last tool_output
+    n_dedup_skips = 0
 
     for step_idx in range(max_steps):
         prompt = _build_prompt(question, repo_path, primer, steps)
@@ -201,6 +215,24 @@ def agent_loop(
             system=AGENT_SYSTEM,
             temperature=0.0,
         )
+        # Week 10 — validate the model's schema fill. Qwen 7B in particular
+        # frequently emits `grep` with an empty pattern even when its
+        # reasoning describes what to search for. Re-prompt once with the
+        # specific failure surfaced; that fixes most cases.
+        err = _validate_decision(decision)
+        if err:
+            retry_prompt = (
+                prompt
+                + f"\n\n## YOUR PREVIOUS DECISION WAS INVALID\n{err}\n"
+                "Re-emit a corrected Decision. Fill the missing field with a "
+                "real value — do NOT leave it empty."
+            )
+            decision = llm.structured(
+                prompt=retry_prompt,
+                schema=Decision,
+                system=AGENT_SYSTEM,
+                temperature=0.0,
+            )
         if trace:
             trace.event(
                 step_idx, "decision",
@@ -220,7 +252,30 @@ def agent_loop(
                 steps=steps,
                 forced_final=False,
                 run_id=trace.run_id if trace else None,
+                n_dedup_skips=n_dedup_skips,
             )
+
+        # Week 10 — dedup. If the model just emitted a tool call identical
+        # to a previous one, surface the cached output with an explicit
+        # "you already did this — pick something else" prefix. Keeps the
+        # agent from burning the budget on grep-grep-grep.
+        call_key = (decision.next_action, decision.path or "", decision.pattern or "")
+        if call_key in seen_calls:
+            n_dedup_skips += 1
+            cached = seen_calls[call_key]
+            note = (
+                f"DEDUP: you already called {decision.next_action} with "
+                f"path={decision.path!r}"
+                + (f", pattern={decision.pattern!r}" if decision.next_action == "grep" else "")
+                + ". The output below is the cached result. On your NEXT step, "
+                "pick a different tool/path/pattern, or set "
+                "next_action='final_answer'.\n\n" + cached
+            )
+            steps.append(Step(decision=decision, tool_output=note))
+            if trace:
+                trace.event(step_idx, "dedup_hit", action=decision.next_action,
+                            path=decision.path, pattern=decision.pattern)
+            continue
 
         spec = _build_tool(decision)
         try:
@@ -228,6 +283,10 @@ def agent_loop(
         except Exception as e:  # noqa: BLE001
             output = f"ERROR running {decision.next_action}: {e}"
         steps.append(Step(decision=decision, tool_output=output))
+        # Week 10 — only cache successful tool calls. An error output
+        # shouldn't trigger dedup on retry; the model needs a fresh shot.
+        if not output.startswith("ERROR"):
+            seen_calls[call_key] = output
         if trace:
             trace.event(
                 step_idx, "tool_output",
@@ -239,7 +298,19 @@ def agent_loop(
     # Max steps hit. Force a final-answer Decision via the same schema so the
     # answer text comes from `Decision.answer` cleanly — `llm.complete()`
     # would let the model leak schema syntax into prose.
-    forced_prompt = _build_prompt(question, repo_path, primer, steps, force_final=True)
+    #
+    # Week 10 — two-stage finalize: first ask the model to summarize what
+    # it learned from each step, then commit to the answer. Helps a 7B model
+    # that otherwise hedges into "I couldn't find X" when it actually saw X.
+    summary_prompt = _build_summary_prompt(question, repo_path, primer, steps)
+    summary = llm.complete(summary_prompt, system=AGENT_SYSTEM, temperature=0.0).strip()
+    if trace:
+        trace.event(max_steps, "summary", chars=len(summary))
+
+    forced_prompt = _build_prompt(
+        question, repo_path, primer, steps,
+        force_final=True, summary=summary,
+    )
     forced = llm.structured(
         prompt=forced_prompt,
         schema=Decision,
@@ -255,6 +326,7 @@ def agent_loop(
         steps=steps,
         forced_final=True,
         run_id=trace.run_id if trace else None,
+        n_dedup_skips=n_dedup_skips,
     )
 
 
@@ -268,6 +340,30 @@ def _build_tool(d: Decision):
     if d.next_action == "grep":
         return grep(pattern=d.pattern, path=d.path or ".")
     raise ValueError(f"_build_tool called for non-tool action: {d.next_action}")
+
+
+def _validate_decision(d: Decision) -> Optional[str]:
+    """Week 10 — catch the specific 7B-model failure modes where the model
+    picks a tool but leaves the required arg empty. Returns an error
+    message to feed back, or None if the decision is well-formed."""
+    if d.next_action == "grep" and not d.pattern.strip():
+        return (
+            "next_action='grep' but the `pattern` field is empty. Grep "
+            "needs a real substring (e.g. a function name like "
+            "'_resolve_safely', or a phrase). Re-emit with a non-empty pattern."
+        )
+    if d.next_action == "read_file" and not d.path.strip():
+        return (
+            "next_action='read_file' but the `path` field is empty. "
+            "Re-emit with a real file path like 'lantern/llm.py'."
+        )
+    if d.next_action == "final_answer" and not d.answer.strip():
+        return (
+            "next_action='final_answer' but the `answer` field is empty. "
+            "Write your full answer in the `answer` field — naming files, "
+            "symbols, and line numbers."
+        )
+    return None
 
 
 def _retrieval_primer(question: str, repo_path: Path) -> str:
@@ -305,6 +401,7 @@ def _build_prompt(
     steps: list[Step],
     *,
     force_final: bool = False,
+    summary: Optional[str] = None,
 ) -> str:
     parts: list[str] = [f"Repository root: {repo_path}\n"]
     if primer:
@@ -312,21 +409,57 @@ def _build_prompt(
     parts.append(f"## Question\n{question}\n")
     if steps:
         parts.append(_render_history(steps))
+    if summary:
+        # Week 10 — two-stage finalize. The model's own digest of what each
+        # step revealed gets put back in front of it before it commits.
+        parts.append(
+            "\n## Your summary of what the steps revealed\n"
+            f"{summary}\n"
+        )
     if force_final:
         parts.append(
             "\n## Step budget exhausted — write your final answer.\n"
             "Pick `final_answer` for next_action. Put your complete answer in "
-            "the `answer` field, using ONLY information from the steps above. "
-            "Do NOT fabricate files or line numbers. If what you found doesn't "
-            "fully answer the question, say so plainly in `answer`."
+            "the `answer` field. Use the summary above plus the raw steps as "
+            "your evidence — name the SPECIFIC files and symbols you saw. "
+            "Do NOT fabricate files or line numbers. If the evidence doesn't "
+            "fully answer the question, say what you DID learn, then say "
+            "what's missing."
         )
     else:
         parts.append(
             "\n## Decide your next step.\n"
             "First write your `reasoning` (one short sentence about what you "
-            "want to learn this step). Then pick `next_action`. If you have "
-            "enough information, pick `final_answer` and write the answer."
+            "want to learn this step). Then pick `next_action`. Don't repeat "
+            "a tool call you've already made — if you find yourself wanting "
+            "to, pick `final_answer` and commit to what you've got. If you "
+            "have enough information, pick `final_answer` and write the answer."
         )
+    return "\n".join(parts)
+
+
+def _build_summary_prompt(
+    question: str,
+    repo_path: Path,
+    primer: str,
+    steps: list[Step],
+) -> str:
+    """Stage-1 of the two-stage finalize: ask the model to summarize what
+    each step actually told it. Decouples 'read the evidence' from 'write
+    the answer' so a small model doesn't fumble both at once."""
+    parts: list[str] = [f"Repository root: {repo_path}\n"]
+    if primer:
+        parts.append(primer + "\n")
+    parts.append(f"## Question\n{question}\n")
+    parts.append(_render_history(steps))
+    parts.append(
+        "\n## Summarize what you learned\n"
+        "Write 2-4 short bullet points. For each step, say what you DID "
+        "learn (real file paths, symbol names, line numbers) — NOT what "
+        "you still want to learn. If a step didn't help, say so. Keep "
+        "each bullet under 25 words. Do not write the final answer here; "
+        "that comes next."
+    )
     return "\n".join(parts)
 
 

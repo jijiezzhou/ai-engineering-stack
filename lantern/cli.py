@@ -142,7 +142,7 @@ def ask(
         help="Use the week-3 two-shot agent (one tool, then answer).",
     ),
     max_steps: int = typer.Option(
-        5, "--max-steps", min=1, max=20,
+        8, "--max-steps", min=1, max=20,
         help="Maximum tool-using iterations before forcing a final answer.",
     ),
     no_retrieval: bool = typer.Option(
@@ -339,7 +339,7 @@ def eval_cmd(
         help="Retrieval mode: skip the LLM reranker (~10s/question saved).",
     ),
     max_steps: int = typer.Option(
-        5, "--max-steps", min=1, max=20,
+        8, "--max-steps", min=1, max=20,
         help="Agent mode: max steps per question.",
     ),
     questions: int = typer.Option(

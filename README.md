@@ -4,6 +4,7 @@
 
 [![Stars](https://img.shields.io/github/stars/jijiezzhou/ai-engineering-stack?style=social)](../../stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/jijiezzhou/ai-engineering-stack)](../../commits/main)
+[![CI](https://github.com/jijiezzhou/ai-engineering-stack/actions/workflows/eval.yml/badge.svg)](../../actions/workflows/eval.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -83,6 +84,32 @@ The capstone is **Lantern** — point it at any repo, it answers questions about
 
 Each week's folder (`weeks/NN-name/`) contains: concept walkthrough, runnable code, hands-on exercise, and a checkpoint that plugs into Lantern.
 
+### Architecture in one picture
+
+```mermaid
+flowchart LR
+    SRC[Source files<br/>+ docs + configs] --> CHK[chunk_file<br/>tree-sitter Python<br/>fixed-size others]
+    CHK -->|chunk_class<br/>code/doc/config| VEC[(Chroma<br/>vector index)]
+    CHK --> BM[(BM25 sidecar<br/>~/.lantern/index/)]
+
+    Q[User question] --> AGENT[agent_loop<br/>reasoning + dedup<br/>+ validate-retry]
+    VEC --> HYB[hybrid_search<br/>RRF + kinds filter]
+    BM --> HYB
+    HYB --> AGENT
+    AGENT --> TOOLS[read_file / list_dir / grep<br/>path-traversal-safe]
+    TOOLS --> AGENT
+    AGENT --> ANS[Final answer<br/>cited]
+    AGENT -.-> TR[(JSONL trace<br/>~/.lantern/traces/)]
+
+    AGENT -.exposed via.-> MCP[MCP stdio server]
+    MCP -.consumed by.-> CC[Claude Code /<br/>Cursor / Goose]
+
+    classDef store fill:#1a1a1a,stroke:#888,stroke-dasharray:0
+    classDef pipe fill:#003a3a,stroke:#3a8a8a
+    class VEC,BM,TR store
+    class CHK,HYB,AGENT,TOOLS pipe
+```
+
 ### Production extensions (optional)
 
 The benchmark in week 8 exposed real gaps. These weeks close them.
@@ -159,6 +186,12 @@ PRs welcome — clearer explanations, better exercises, bug fixes in week code, 
 - backend support for OpenAI / Gemini in `lantern/llm.py`.
 
 New external links must include a one-line *why it's here* note. Open an issue first for roadmap changes.
+
+## ⭐ Star this repo if it helped
+
+The whole point of building in public is to give other engineers a head start. If this curriculum helped you — even one week of it — drop a star. It's the quickest way to tell me the work was worth doing, and it makes the repo more findable for the next person who needs it.
+
+If you take Lantern to your real codebase and learn something the BENCHMARKS table doesn't show, [open an issue](../../issues) — I want to hear about it.
 
 ## License
 
